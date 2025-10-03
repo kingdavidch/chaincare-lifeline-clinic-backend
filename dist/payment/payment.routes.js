@@ -1,0 +1,21 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const payment_controller_1 = __importDefault(require("./payment.controller"));
+const async_handler_1 = __importDefault(require("../utils/async.handler"));
+const patient_middleware_1 = __importDefault(require("../patient/patient.middleware"));
+const clinic_middleware_1 = __importDefault(require("../clinic/clinic.middleware"));
+const paymentRouter = (0, express_1.Router)();
+paymentRouter.get("/channels", (0, async_handler_1.default)(payment_controller_1.default.getChannels));
+paymentRouter.post("/yellowcard/deposit", (0, async_handler_1.default)(payment_controller_1.default.submitDepositRequest));
+paymentRouter.get("/payments/:id", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(payment_controller_1.default.getPaymentDetails));
+paymentRouter.post("/yellowcard/deposit-webhook", (0, async_handler_1.default)(payment_controller_1.default.handleYellowCardWebhook));
+paymentRouter.post("/p/d-w", (0, async_handler_1.default)(payment_controller_1.default.handlePawaPayWebhook));
+paymentRouter.get("/pawapay/details/:id", (0, async_handler_1.default)(payment_controller_1.default.getPawaPayPaymentDetails));
+paymentRouter.post("/p/p-w", (0, async_handler_1.default)(payment_controller_1.default.handlePawaPayPayoutWebhook));
+paymentRouter.post("/yellowcard/payout-webhook", (0, async_handler_1.default)(payment_controller_1.default.handleYellowCardPayoutWebhook));
+paymentRouter.get("/yellowcard/banks", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(payment_controller_1.default.getYellowCardBanksForCountry));
+exports.default = paymentRouter;

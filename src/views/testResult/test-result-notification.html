@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <title>Your Test Result is Ready</title>
+    <style>
+      @media screen and (max-width: 600px) {
+        .container {
+          padding: 16px 12px !important;
+        }
+        .heading {
+          font-size: 20px !important;
+          line-height: 1.3 !important;
+        }
+        .details {
+          font-size: 14px !important;
+          padding: 12px 14px !important;
+        }
+        .btn {
+          display: block !important;
+          width: calc(100% - 40px) !important;
+          margin: 0 auto !important;
+          padding: 14px !important;
+          font-size: 15px !important;
+        }
+        .subheading {
+          font-size: 14px !important;
+          line-height: 1.4 !important;
+        }
+        .footer {
+          font-size: 11px !important;
+        }
+      }
+    </style>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background-color: #ffffff;
+      color: #333;
+    "
+  >
+    <div
+      class="container"
+      style="max-width: 660px; margin: 0 auto; padding: 24px 20px 40px"
+    >
+      <!-- Header -->
+      <h1
+        class="heading"
+        style="
+          text-align: center;
+          color: #fbae24;
+          font-size: 24px;
+          margin-bottom: 8px;
+        "
+      >
+        📄 Your Test Result is Ready
+      </h1>
+      <p
+        class="subheading"
+        style="
+          text-align: center;
+          font-size: 16px;
+          color: #555;
+          margin-bottom: 24px;
+        "
+      >
+        Your recent test result is now available. You can view and download it
+        securely.
+      </p>
+
+      <!-- Patient Info -->
+      <div
+        class="details"
+        style="
+          background: #f9f9f9;
+          border: 1px solid #eee;
+          border-radius: 8px;
+          padding: 16px 20px;
+          font-size: 15px;
+          line-height: 1.6;
+          margin-bottom: 32px;
+          word-break: break-word;
+        "
+      >
+        <p><strong>👤 Patient Name:</strong> {{patientFullName}}</p>
+        <p><strong>🔖 Reference No:</strong> {{refNo}}</p>
+        <p><strong>🧪 Test:</strong> {{testName}}</p>
+        <p><strong>🏥 Clinic:</strong> {{clinicName}}</p>
+        <p><strong>📅 Test Date:</strong> {{testDate}}</p>
+        <p><strong>📤 Result Sent:</strong> {{resultDate}}</p>
+      </div>
+
+      <!-- Button -->
+      <div class="btn-wrapper" style="text-align: center">
+        <a
+          href="{{resultUrl}}"
+          class="btn"
+          style="
+            display: inline-block;
+            background-color: #fbae24;
+            color: #ffffff;
+            padding: 12px 24px;
+            font-size: 16px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+          "
+        >
+          View Test Result
+        </a>
+      </div>
+
+      <!-- Footer -->
+      <div
+        class="footer"
+        style="
+          text-align: center;
+          font-size: 12px;
+          color: #666;
+          border-top: 1px solid #e0e0e0;
+          padding-top: 24px;
+          margin-top: 40px;
+        "
+      >
+        <p style="margin: 5px 0">
+          Questions? Email
+          <a href="mailto:clinical@mylifeline.world" style="color: #fbae24"
+            >clinical@mylifeline.world</a
+          >
+          or call
+          <a href="tel:+250725566626" style="color: #fbae24"
+            >+1 (409) 916-8008 | +250 725 566 626</a
+          >
+        </p>
+        <p style="margin: 5px 0">&copy; 2025 LifeLine. All rights reserved.</p>
+        <p style="margin: 6px 0">
+          &copy; 2025 LifeLine Health Services. All rights reserved.<br />
+          <span style="font-style: italic"
+            >Ensuring your health, empowering your choices.</span
+          >
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

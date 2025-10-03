@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Delivery Address Updated</title>
+    <style>
+      @media only screen and (max-width: 600px) {
+        .container {
+          padding: 12px !important;
+        }
+
+        .header h2 {
+          font-size: 18px !important;
+        }
+
+        .address-box {
+          font-size: 14px !important;
+          padding: 10px !important;
+        }
+
+        .content p {
+          font-size: 14px !important;
+        }
+      }
+    </style>
+  </head>
+  <body style="margin: 0; padding: 0; background-color: #f5f5f5">
+    <div
+      style="
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 16px;
+        background-color: #ffffff;
+        border-radius: 10px;
+        font-family: Arial, sans-serif;
+      "
+    >
+      <div
+        class="header"
+        style="
+          text-align: center;
+          padding-bottom: 16px;
+          border-bottom: 2px solid #ddd;
+        "
+      >
+        <h2 style="color: #fbae24; margin: 0; font-size: 20px">
+          Delivery Address Updated
+        </h2>
+      </div>
+
+      <div
+        class="content"
+        style="padding: 16px 0; font-size: 14px; color: #333"
+      >
+        <p style="margin: 10px 0; line-height: 1.6">
+          Hello <strong>{{patientName}}</strong>,
+        </p>
+        <p style="margin: 10px 0; line-height: 1.6">
+          Your delivery address for order <strong>#{{orderId}}</strong> has been
+          successfully updated. Please ensure the details below are correct.
+        </p>
+
+        <div
+          class="address-box"
+          style="
+            background-color: #fbae24;
+            color: white;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 15px;
+            margin: 16px 0;
+            word-break: break-word;
+          "
+        >
+          {{deliveryAddress}}
+        </div>
+
+        <p style="margin: 10px 0; line-height: 1.6">
+          If this change was not made by you, please contact our support team
+          immediately.
+        </p>
+        <p style="margin: 10px 0; line-height: 1.6">
+          Thank you for choosing LifeLine.
+        </p>
+      </div>
+
+      <div
+        class="footer"
+        style="
+          text-align: center;
+          font-size: 12px;
+          color: #888;
+          padding-top: 12px;
+          border-top: 1px solid #eee;
+          margin-top: 24px;
+        "
+      >
+        <p style="margin: 5px 0">
+          Need help?
+          <a
+            href="mailto:clinical@mylifeline.world"
+            style="color: #fbae24; text-decoration: none"
+            >Contact Support</a
+          >
+        </p>
+        <p style="margin: 5px 0">&copy; 2025 LifeLine. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

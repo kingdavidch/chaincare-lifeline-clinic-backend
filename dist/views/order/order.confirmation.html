@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Order Confirmation</title>
+    <style>
+      @media only screen and (max-width: 600px) {
+        .container {
+          padding: 12px !important;
+        }
+
+        .responsive-table {
+          overflow-x: auto;
+          display: block;
+        }
+
+        .responsive-table table {
+          width: 600px;
+        }
+
+        .header h2 {
+          font-size: 18px !important;
+        }
+
+        .details p,
+        .footer p {
+          font-size: 14px !important;
+        }
+      }
+    </style>
+  </head>
+  <body style="margin: 0; padding: 0; background-color: #f5f5f5">
+    <div
+      style="
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 16px;
+        background-color: #ffffff;
+        border-radius: 10px;
+        font-family: Arial, sans-serif;
+      "
+    >
+      <div
+        class="header"
+        style="
+          text-align: center;
+          border-bottom: 2px solid #ddd;
+          padding-bottom: 16px;
+        "
+      >
+        <h2 style="color: #fbae24; margin: 0; font-size: 20px">
+          Order Confirmation
+        </h2>
+        <p style="margin-top: 8px; font-size: 14px; color: #444">
+          Thank you for your order,
+          <strong style="text-transform: capitalize">{{patientName}}</strong>!
+        </p>
+      </div>
+
+      <div
+        class="details"
+        style="padding: 16px 0; font-size: 14px; color: #333"
+      >
+        <p style="margin: 8px 0"><strong>Order ID:</strong> #{{orderId}}</p>
+        <p style="margin: 8px 0">
+          <strong>Clinic:</strong>
+          <span style="text-transform: capitalize">{{clinicName}}</span>
+        </p>
+        <p style="margin: 8px 0">
+          <strong>Delivery Address:</strong>
+          <span style="text-transform: capitalize">{{deliveryAddress}}</span>
+        </p>
+
+        <p style="margin: 8px 0">
+          <strong>Delivery Method:</strong>
+          <span style="text-transform: capitalize">{{deliveryMethod}}</span>
+        </p>
+
+        {{#if isSelfPick}} {{#if clinicAddress}}
+        <p style="margin: 8px 0">
+          <strong>Clinic Address:</strong>
+          <span style="text-transform: capitalize">{{clinicAddress}}</span>
+        </p>
+        {{/if}} {{#if clinicMapUrl}}
+        <p style="margin: 8px 0">
+          <strong>Location Map:</strong>
+          <a
+            href="{{clinicMapUrl}}"
+            target="_blank"
+            style="color: #fbae24; text-decoration: none"
+          >
+            View on Google Maps
+          </a>
+        </p>
+        {{/if}} {{/if}}
+
+        <p style="margin: 8px 0">
+          <strong>Payment Method:</strong>
+          <span style="text-transform: capitalize">{{paymentMethod}}</span>
+        </p>
+        <p style="margin: 8px 0">
+          <strong>Total Amount:</strong> {{totalAmount}} RWF
+        </p>
+      </div>
+
+      <h3 style="font-size: 16px; margin-top: 16px; color: #444">
+        Tests Ordered
+      </h3>
+
+      <div class="responsive-table" style="width: 100%; overflow-x: auto">
+        <table
+          style="
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 13px;
+            min-width: 600px;
+          "
+        >
+          <thead>
+            <tr>
+              <th
+                style="
+                  border: 1px solid #ddd;
+                  padding: 10px;
+                  background-color: #fbae24;
+                  color: white;
+                  text-align: left;
+                "
+              >
+              Appointment Name
+              </th>
+              <th
+                style="
+                  border: 1px solid #ddd;
+                  padding: 10px;
+                  background-color: #fbae24;
+                  color: white;
+                  text-align: left;
+                "
+              >
+                Price
+              </th>
+              <th
+                style="
+                  border: 1px solid #ddd;
+                  padding: 10px;
+                  background-color: #fbae24;
+                  color: white;
+                  text-align: left;
+                "
+              >
+                Individuals
+              </th>
+              <th
+                style="
+                  border: 1px solid #ddd;
+                  padding: 10px;
+                  background-color: #fbae24;
+                  color: white;
+                  text-align: left;
+                "
+              >
+                Turnaround Time
+              </th>
+              <th
+                style="
+                  border: 1px solid #ddd;
+                  padding: 10px;
+                  background-color: #fbae24;
+                  color: white;
+                  text-align: left;
+                "
+              >
+                Description
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {{{testRows}}}
+          </tbody>
+        </table>
+      </div>
+
+      <div
+        class="footer"
+        style="
+          text-align: center;
+          font-size: 12px;
+          color: #888;
+          padding-top: 12px;
+          border-top: 1px solid #eee;
+          margin-top: 24px;
+        "
+      >
+        <p style="margin: 5px 0">
+          If you have any questions, please
+          <a
+            href="mailto:clinical@mylifeline.world"
+            style="color: #fbae24; text-decoration: none"
+            >contact us</a
+          >.
+        </p>
+        <p style="margin: 5px 0">&copy; 2025 LifeLine. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

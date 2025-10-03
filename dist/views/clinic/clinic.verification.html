@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verify Your LifeLine Clinic Account</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f9f9f9;
+        color: #333333;
+        line-height: 1.6;
+      }
+      .container {
+        max-width: 600px;
+        margin: 20px auto;
+        padding: 25px;
+        background-color: #ffffff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+      }
+      .header {
+        color: #fabe24;
+        font-size: 22px;
+        margin-bottom: 20px;
+        font-weight: bold;
+      }
+      .btn-container {
+        margin: 25px 0;
+        text-align: center;
+      }
+      .btn {
+        display: inline-block;
+        padding: 12px 25px;
+        font-size: 16px;
+        font-weight: bold;
+        color: #ffffff;
+        background-color: #00ac4f;
+        border-radius: 6px;
+        text-decoration: none;
+      }
+      .footer {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #eeeeee;
+        font-size: 14px;
+        color: #777777;
+      }
+      .warning {
+        color: #ff4444;
+        font-weight: bold;
+      }
+      @media only screen and (max-width: 600px) {
+        .container {
+          margin: 10px;
+          padding: 15px;
+        }
+        .header {
+          font-size: 20px;
+        }
+        .btn {
+          font-size: 15px;
+          padding: 10px 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">Welcome to LifeLine</div>
+
+      <p>Hello <strong>{{clinicName}}</strong>,</p>
+
+      <p>
+        Welcome to LifeLine, the healthcare platform designed to empower clinics
+        with seamless test management, patient diagnostics, insurance handling,
+        and real-time updates.
+      </p>
+
+      <p>
+        Your clinic is just one step away from getting started. Please verify
+        your account by clicking the button below:
+      </p>
+
+      <div class="btn-container">
+        <a href="{{verificationLink}}" class="btn">Verify Account</a>
+      </div>
+
+      <p class="warning">
+        For your security, never share this link with anyone. LifeLine will
+        never ask you for this verification link.
+      </p>
+
+      <p>
+        If you didn't request this verification, please ignore this email or
+        contact our support team if you have concerns.
+      </p>
+
+      <div class="footer">
+        <p>Thank you,</p>
+        <p><strong>The LifeLine Team</strong></p>
+        <p>
+          Norrsken House Kigali, 1 KN 78 St, Kigali, Rwanda<br />
+          1606 Headway Cir STE 9814, Austin, TX 78754
+        </p>
+        <p>
+          This is an automated message - please do not reply directly to this
+          email.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

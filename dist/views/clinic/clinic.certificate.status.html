@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Certificate {{status}}</title>
+    <style>
+      @media only screen and (max-width: 600px) {
+        .container {
+          padding: 16px !important;
+        }
+        .button {
+          width: calc(100% - 40px) !important;
+          text-align: center !important;
+          display: block !important;
+          margin: 0 auto !important;
+        }
+      }
+    </style>
+  </head>
+  <body
+    style="
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+    "
+  >
+    <div
+      class="container"
+      style="
+        max-width: 600px;
+        margin: 40px auto;
+        padding: 24px;
+        background-color: #ffffff;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+      "
+    >
+      <!-- Header -->
+      <div
+        style="
+          text-align: center;
+          padding: 16px 0;
+          background-color: #2c3e50;
+          color: #ffffff;
+          border-radius: 6px 6px 0 0;
+        "
+      >
+        <h2 style="margin: 0; font-size: 22px">Certificate {{status}}</h2>
+      </div>
+
+      <!-- Content -->
+      <div style="padding: 20px">
+        <p>
+          Dear <strong>{{#capitalize}}{{clinicName}}{{/capitalize}}</strong>,
+        </p>
+
+        {{#if approved}}
+        <p>
+          🎉 We are pleased to inform you that your clinic certificate has been
+          <strong>approved</strong>. You now have full access to the LifeLine
+          platform and its features.
+        </p>
+        <p>
+          Thank you for trusting LifeLine with your healthcare management needs.
+        </p>
+        <div style="text-align: center">
+          <a
+            href="{{actionLink}}"
+            class="button approved"
+            style="
+              display: inline-block;
+              margin-top: 20px;
+              padding: 12px 24px;
+              background-color: #4caf50;
+              color: #ffffff;
+              text-decoration: none;
+              font-weight: bold;
+              border-radius: 5px;
+            "
+          >
+            Log in to LifeLine
+          </a>
+        </div>
+
+        {{else}}
+        <p>
+          ❌ Unfortunately, your clinic certificate has been
+          <strong>rejected</strong>.
+        </p>
+        <p>
+          <strong>Reason:</strong>
+          {{#capitalize}}{{rejectionReason}}{{/capitalize}}
+        </p>
+        <p>
+          Please review the feedback and resubmit your certificate. If you need
+          assistance, our team is here to help.
+        </p>
+        <div style="text-align: center">
+          <a
+            href="{{actionLink}}"
+            class="button rejected"
+            style="
+              display: inline-block;
+              margin-top: 20px;
+              padding: 12px 24px;
+              background-color: #e74c3c;
+              color: #ffffff;
+              text-decoration: none;
+              font-weight: bold;
+              border-radius: 5px;
+            "
+          >
+            Contact Support
+          </a>
+        </div>
+        {{/if}}
+      </div>
+
+      <!-- Footer -->
+      <div
+        style="
+          text-align: center;
+          font-size: 12px;
+          color: #888;
+          padding-top: 20px;
+          border-top: 1px solid #eee;
+        "
+      >
+        <p>
+          Need help?
+          <a
+            href="mailto:clinical@mylifeline.world"
+            style="color: #fbae24; text-decoration: none"
+          >
+            clinical@mylifeline.world
+          </a>
+        </p>
+        <p>&copy; 2025 LifeLine. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>
