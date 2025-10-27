@@ -53,7 +53,7 @@ const testResultSchema = new mongoose_1.Schema({
     patient: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: "Patient",
-        required: true
+        required: false
     },
     clinic: {
         type: mongoose_1.Schema.Types.ObjectId,

@@ -45,13 +45,14 @@ const clinicSchema = new Schema<IClinic>(
       type: String,
       required: true,
       trim: true,
+      unique: true,
       lowercase: true,
       maxlength: 100
     },
     bio: {
       type: String,
       trim: true,
-      maxlength: 500
+      maxlength: [1000, "Bio cannot exceed 500 characters"]
     },
     email: {
       type: String,
@@ -77,9 +78,37 @@ const clinicSchema = new Schema<IClinic>(
       trim: true,
       lowercase: true
     },
+    username: {
+      type: String,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      maxlength: 30
+    },
+
+    deliveryMethods: {
+      type: [Number]
+      // 0 = Home service
+      // 1 = In-person
+      // 2 = Online session
+    },
     currencySymbol: {
       type: String,
       trim: true
+    },
+    languages: {
+      type: [String],
+      trim: true,
+      lowercase: true,
+      default: [],
+      validate(value: string[]) {
+        if (!Array.isArray(value)) {
+          throw new Error("Languages must be an array of strings")
+        }
+        if (value.length > 5) {
+          throw new Error("You can only specify up to 5 languages")
+        }
+      }
     },
     password: {
       type: String,
@@ -115,6 +144,15 @@ const clinicSchema = new Schema<IClinic>(
     supportInsurance: {
       type: [Number],
       default: []
+    },
+    socialMedia: {
+      facebook: { type: String, trim: true, lowercase: true },
+      twitter: { type: String, trim: true, lowercase: true },
+      instagram: { type: String, trim: true, lowercase: true },
+      linkedin: { type: String, trim: true, lowercase: true },
+      tiktok: { type: String, trim: true, lowercase: true },
+      other: { type: String, trim: true, lowercase: true },
+      default: {}
     },
     onlineStatus: {
       type: String,
@@ -155,6 +193,18 @@ const clinicSchema = new Schema<IClinic>(
       required: true,
       default: false
     },
+    practitionerType: {
+      type: String,
+      enum: ["doctor", "therapist", "clinic", "nurse", "hospital"],
+      lowercase: true,
+      trim: true
+    },
+    categories: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "practitionercategory"
+      }
+    ],
     totalMoneyOwed: {
       type: Number,
       default: 0

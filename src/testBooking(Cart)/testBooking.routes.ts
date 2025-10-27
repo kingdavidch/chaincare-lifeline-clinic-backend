@@ -33,24 +33,6 @@ testBookingRouter.delete(
 )
 
 /**
- * Update Quantity of Individuals in Cart (Increase or Decrease)
- */
-testBookingRouter.patch(
-  "/update-quantity/:bookingId",
-  PatientMiddleware.authenticate,
-  asyncHandler(TestBookingController.updateQuantity)
-)
-
-/**
- * Get available slots for a clinic on a date
- */
-testBookingRouter.get(
-  "/:clinicId/available-slots",
-  PatientMiddleware.authenticate,
-  asyncHandler(TestBookingController.getAvailableSlots)
-)
-
-/**
  * Clear patient's cart
  */
 testBookingRouter.delete(

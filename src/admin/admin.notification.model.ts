@@ -1,6 +1,6 @@
 import { Schema, Types, model } from "mongoose"
 
-interface IAdminNotification {
+export interface IAdminNotification {
   admin: Types.ObjectId
   title: string
   message: string
@@ -13,6 +13,7 @@ interface IAdminNotification {
     | "warning"
     | "alert"
     | "subscription"
+    | "payment"
   isRead: boolean
   createdAt?: Date
 }
@@ -42,7 +43,8 @@ const adminNotificationSchema = new Schema<IAdminNotification>(
         "info",
         "warning",
         "alert",
-        "subscription"
+        "subscription",
+        "payment"
       ],
       required: true
     },

@@ -13,6 +13,7 @@ const discountRouter = (0, express_1.Router)();
 discountRouter.post("/clinic", clinic_middleware_1.default.authenticate, clinic_access_guard_1.ClinicAccessGuard, (0, async_handler_1.default)(discount_controller_1.default.createDiscount));
 discountRouter.get("/clinic", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(discount_controller_1.default.listClinicDiscounts));
 discountRouter.delete("/clinic/:id", clinic_middleware_1.default.authenticate, clinic_access_guard_1.ClinicAccessGuard, (0, async_handler_1.default)(discount_controller_1.default.deleteDiscount));
-discountRouter.get("/clinic/:clinicId", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(discount_controller_1.default.getActiveDiscountsForClinic));
+discountRouter.get("/clinic/:clinicId", (0, async_handler_1.default)(discount_controller_1.default.getActiveDiscountsForClinic));
 discountRouter.post("/patient/apply", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(discount_controller_1.default.applyDiscount));
+discountRouter.post("/public/apply", (0, async_handler_1.default)(discount_controller_1.default.applyDiscountPublic));
 exports.default = discountRouter;

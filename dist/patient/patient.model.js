@@ -186,7 +186,9 @@ const patientSchema = new mongoose_1.Schema({
     },
     expoPushToken: {
         type: String,
-        default: null
+        default: null,
+        unique: true,
+        sparse: true
     },
     resetPasswordToken: {
         type: String

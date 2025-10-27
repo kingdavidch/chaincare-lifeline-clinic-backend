@@ -26,9 +26,8 @@ const clinic_notification_model_1 = __importDefault(require("../clinic/clinic.no
 const moment_1 = __importDefault(require("moment"));
 const patient_notification_model_1 = __importDefault(require("../patient/patient.notification.model"));
 const sendPushNotification_1 = require("../utils/sendPushNotification");
-const admin_notification_model_1 = __importDefault(require("../admin/admin.notification.model"));
-const admin_model_1 = __importDefault(require("../admin/admin.model"));
 const __1 = require("..");
+const utils_2 = require("../admin/utils");
 class ClaimController {
     /**
      * Clinic Adds a Claim (Only for Premium Subscription Patients)
@@ -145,16 +144,7 @@ class ClaimController {
                     isRead: false
                 });
                 // ✅ Admin notification
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create({
-                        admin: admin._id,
-                        title: "New Claim Submitted",
-                        message: `A new claim (Claim No: ${newClaim.claimNo}) was submitted by clinic "${clinic.clinicName}" for test "${test.testName}".`,
-                        type: "claim",
-                        isRead: false
-                    });
-                }
+                yield (0, utils_2.notifyAdmin)("New Claim Submitted", `A new claim (Claim No: ${newClaim.claimNo}) was submitted by clinic "${clinic.clinicName}" for test "${test.testName}".`, "claim");
                 __1.io.emit("claim:add", {
                     clinicId,
                     claimId: newClaim._id,

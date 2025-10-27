@@ -25,7 +25,8 @@ const adminNotificationSchema = new mongoose_1.Schema({
             "info",
             "warning",
             "alert",
-            "subscription"
+            "subscription",
+            "payment"
         ],
         required: true
     },

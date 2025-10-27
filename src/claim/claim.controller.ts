@@ -13,9 +13,8 @@ import clinicNotificationModel from "../clinic/clinic.notification.model"
 import moment from "moment"
 import patientNotificationModel from "../patient/patient.notification.model"
 import { sendPushNotification } from "../utils/sendPushNotification"
-import adminNotificationModel from "../admin/admin.notification.model"
-import adminModel from "../admin/admin.model"
 import { io } from ".."
+import { notifyAdmin } from "../admin/utils"
 
 export default class ClaimController {
   /**
@@ -177,16 +176,11 @@ export default class ClaimController {
       })
 
       // ✅ Admin notification
-      const admin = await adminModel.findOne()
-      if (admin) {
-        await adminNotificationModel.create({
-          admin: admin._id,
-          title: "New Claim Submitted",
-          message: `A new claim (Claim No: ${newClaim.claimNo}) was submitted by clinic "${clinic.clinicName}" for test "${test.testName}".`,
-          type: "claim",
-          isRead: false
-        })
-      }
+      await notifyAdmin(
+        "New Claim Submitted",
+        `A new claim (Claim No: ${newClaim.claimNo}) was submitted by clinic "${clinic.clinicName}" for test "${test.testName}".`,
+        "claim"
+      )
 
       io.emit("claim:add", {
         clinicId,

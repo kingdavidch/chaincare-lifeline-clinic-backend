@@ -267,12 +267,9 @@ class TestController {
                 }
                 const clinic = yield clinic_model_1.default
                     .findById(test.clinic)
-                    .select("avatar clinicName country contractAccepted");
+                    .select("avatar clinicName country contractAccepted clinicId _id");
                 if (!clinic) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
-                }
-                if (clinic.country.toLowerCase() !== patient.country.toLowerCase()) {
-                    throw new app_error_1.default(http_status_1.default.FORBIDDEN, "This test is not available in your country.");
                 }
                 // 🔍 Get test image from TestItem
                 const TestItem = yield test_item_model_1.default.findOne({
@@ -280,7 +277,8 @@ class TestController {
                 });
                 const testDetailsForPatient = {
                     _id: test === null || test === void 0 ? void 0 : test._id,
-                    clinicId: test === null || test === void 0 ? void 0 : test.clinic,
+                    clinicId: clinic.clinicId,
+                    clinic_id: clinic._id,
                     testName: test === null || test === void 0 ? void 0 : test.testName,
                     price: test === null || test === void 0 ? void 0 : test.price,
                     currencySymbol: test === null || test === void 0 ? void 0 : test.currencySymbol,
@@ -479,29 +477,6 @@ class TestController {
             }
         });
     }
-    static clearAllTests(req, res, next) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                const clinicId = (0, utils_1.getClinicId)(req);
-                // Validate Clinic
-                const clinic = yield clinic_model_1.default.findById(clinicId);
-                if (!clinic) {
-                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
-                }
-                // Delete all tests associated with the clinic
-                yield test_model_1.default.deleteMany({ clinic: clinicId });
-                // Remove test references from the clinic model
-                yield clinic_model_1.default.findByIdAndUpdate(clinicId, { $set: { tests: [] } });
-                res.status(http_status_1.default.OK).json({
-                    success: true,
-                    message: "All tests have been cleared successfully!"
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        });
-    }
     /**
      * Get Supported Tests With Clinic Status
      */
@@ -551,16 +526,13 @@ class TestController {
     static patientGetAllTests(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const { location, insurance, coveredByLifeLine } = req.query;
+                const { location, insurance, coveredByLifeLine, deliveryMethod, languages } = req.query;
                 const patientId = (0, utils_1.getPatientId)(req);
-                const patient = yield patient_model_1.default
-                    .findById(patientId)
-                    .select("country email");
+                const patient = yield patient_model_1.default.findById(patientId).select("email");
                 if (!patient) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Patient not found.");
                 }
                 const clinicQuery = {
-                    country: patient.country.toLowerCase(),
                     status: "approved"
                 };
                 if (location) {
@@ -573,6 +545,13 @@ class TestController {
                 }
                 if (insurance) {
                     clinicQuery.supportInsurance = { $in: [Number(insurance)] };
+                }
+                if (deliveryMethod !== undefined) {
+                    clinicQuery.deliveryMethods = { $in: [Number(deliveryMethod)] };
+                }
+                if (languages) {
+                    const lang = languages.toLowerCase().trim();
+                    clinicQuery.languages = { $in: [lang] };
                 }
                 let clinics = yield clinic_model_1.default
                     .find(clinicQuery)
@@ -636,14 +615,9 @@ class TestController {
                 if (!originalTest) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Test not found.");
                 }
-                const originalClinic = yield clinic_model_1.default
-                    .findById(originalTest.clinic)
-                    .select("country");
+                const originalClinic = yield clinic_model_1.default.findById(originalTest.clinic);
                 if (!originalClinic) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
-                }
-                if (originalClinic.country.toLowerCase() !== patient.country.toLowerCase()) {
-                    throw new app_error_1.default(http_status_1.default.FORBIDDEN, "This test is not available in your country.");
                 }
                 const matchingTests = yield test_model_1.default.find({
                     testName: {

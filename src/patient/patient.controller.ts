@@ -23,6 +23,7 @@ import { comparePasswords, hashPassword } from "../utils/password.utils"
 import patientModel from "./patient.model"
 import patientNotificationModel from "./patient.notification.model"
 import { IAddress } from "./patient.types"
+import { notifyAdmin } from "../admin/utils"
 
 const JWT_SECRET = process.env.JWT_SECRET as string
 interface FormattedClinic {
@@ -117,6 +118,11 @@ export default class PatientController {
           .then(() => console.log("Welcome email sent to:", email))
           .catch((err) => console.error("Welcome email failed:", email, err))
       ])
+
+      await notifyAdmin(
+        "New Patient Registration",
+        `Patient "${fullName}" has just signed up.`
+      )
 
       res.status(httpStatus.CREATED).json({
         success: true,
@@ -879,18 +885,21 @@ export default class PatientController {
     next: NextFunction
   ) {
     try {
-      const { location, insurance, test, supportedByLifeLine } = req.query
+      const {
+        location,
+        insurance,
+        test,
+        supportedByLifeLine,
+        deliveryMethod,
+        languages
+      } = req.query
 
       const patientId = getPatientId(req)
-
       const query: any = {}
 
       const patient = await patientModel
         .findById(patientId)
         .select("country email")
-      if (patient) {
-        query.country = patient.country.toLowerCase()
-      }
 
       if (location) {
         const locationRegex = new RegExp(
@@ -906,6 +915,10 @@ export default class PatientController {
 
       if (insurance) {
         query.supportInsurance = { $in: [Number(insurance)] }
+      }
+
+      if (deliveryMethod) {
+        query.deliveryMethods = { $in: [Number(deliveryMethod)] }
       }
 
       if (test) {
@@ -933,11 +946,16 @@ export default class PatientController {
         query.contractAccepted = supportedByLifeLine === "true"
       }
 
-      const totalClinicsInDatabase = await ClinicModel.countDocuments()
+      if (languages) {
+        const lang = (languages as string).toLowerCase().trim()
+        query.languages = { $in: [lang] }
+      }
 
       query.status = "approved"
+      const totalClinicsInDatabase = await ClinicModel.countDocuments()
+
       let clinics = await ClinicModel.find(query).select(
-        "clinicName location country avatar supportInsurance contractAccepted email"
+        "clinicName location country avatar supportInsurance contractAccepted email languages"
       )
 
       const allowedPatientEmail = "sannifortune11@gmail.com"
@@ -974,7 +992,8 @@ export default class PatientController {
           contractAccepted: clinic.contractAccepted
             ? "Supports LifeLine Subscription"
             : null,
-          rating: averageRating
+          rating: averageRating,
+          languages: clinic.languages
         }
       })
 
@@ -1029,11 +1048,12 @@ export default class PatientController {
         status: "approved"
       })
         .select(
-          "clinicName location bio clinicId avatar reviews supportInsurance isVerified onlineStatus country contractAccepted"
+          "clinicName location bio clinicId avatar reviews supportInsurance isVerified onlineStatus country contractAccepted languages username deliveryMethods socialMedia"
         )
         .populate({
           path: "reviews",
-          select: "rating comment patient clinic",
+          select: "rating comment patient clinic createdAt",
+          options: { sort: { createdAt: -1 }, limit: 10 },
           populate: {
             path: "patient",
             select: "fullName email"
@@ -1042,14 +1062,6 @@ export default class PatientController {
 
       if (!clinic) {
         throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
-      }
-
-      const patient = await patientModel.findById(patientId).select("country")
-      if (patient && clinic.country !== patient.country) {
-        throw new AppError(
-          httpStatus.FORBIDDEN,
-          "This clinic is not available in your country."
-        )
       }
 
       const hasOrderedBefore = await orderModel.exists({
@@ -1071,7 +1083,8 @@ export default class PatientController {
             clinic: clinicId,
             validUntil: { $gte: new Date() },
             status: 0,
-            isDeleted: false
+            isDeleted: false,
+            isHidden: false
           })
           .lean()
       ])
@@ -1096,6 +1109,8 @@ export default class PatientController {
         })
         .sort((a, b) => a?.testName?.localeCompare(b.testName))
 
+      const BASE_URL = process.env.CLINIC_PUBLIC_URL || ""
+
       const clinicWithTests = {
         ...clinic.toObject(),
         tests: testsWithImages,
@@ -1103,7 +1118,8 @@ export default class PatientController {
         contractAccepted: clinic.contractAccepted
           ? "Supports LifeLine Subscription"
           : null,
-        discounts: discounts || []
+        discounts: discounts || [],
+        shareUrl: `${BASE_URL}/${clinic.username}`
       }
 
       res.status(httpStatus.OK).json({
@@ -1177,10 +1193,6 @@ export default class PatientController {
 
       const query: Partial<Record<"country" | "status", string>> = {
         status: "approved"
-      }
-
-      if (patient?.country) {
-        query.country = patient.country.toLowerCase()
       }
 
       let clinics = await ClinicModel.find(query).select(

@@ -29,6 +29,8 @@ import AdminNotificationModel from "./admin.notification.model"
 import { mapDeliveryMethod } from "../order/utils"
 import patientNotificationModel from "../patient/patient.notification.model"
 import reviewModel from "../review/review.model"
+import { notifyAdmin } from "./utils"
+import practitionerCategoryModel from "../clinic/practitionercategory.model"
 
 export default class AdminController {
   // auth
@@ -122,13 +124,11 @@ export default class AdminController {
       admin.lastLogin = new Date()
       await admin.save()
 
-      await AdminNotificationModel.create({
-        admin: admin._id,
-        title: "Successful Login Attempt",
-        message: `Your account was successfully accessed on ${moment().format("MMMM Do YYYY, h:mm:ss a")}. If this was not you, please contact support immediately.`,
-        type: "info",
-        isRead: false
-      })
+      await notifyAdmin(
+        "Successful Login Attempt",
+        `Your account was successfully accessed on ${moment().format("MMMM Do YYYY, h:mm:ss a")}. If this was not you, please contact support immediately.`,
+        "info"
+      )
 
       res.status(httpStatus.OK).json({
         success: true,
@@ -174,14 +174,11 @@ export default class AdminController {
           console.error("Error sending email:", error)
         })
 
-      await AdminNotificationModel.create({
-        admin: admin._id,
-        title: "Password Reset Requested",
-        message:
-          "A password reset request was initiated for your account. If this wasn't you, please contact support immediately.",
-        type: "warning",
-        isRead: false
-      })
+      await notifyAdmin(
+        "Password Reset Requested",
+        "A password reset request was initiated for your account. If this wasn't you, please contact support immediately.",
+        "warning"
+      )
 
       res.status(httpStatus.OK).json({
         success: true,
@@ -230,14 +227,11 @@ export default class AdminController {
 
       await admin.save()
 
-      await AdminNotificationModel.create({
-        admin: admin._id,
-        title: "Password Reset Successful",
-        message:
-          "Your password has been successfully updated. If this wasn't you, please contact support immediately.",
-        type: "info",
-        isRead: false
-      })
+      await notifyAdmin(
+        "Password Reset Successful",
+        "Your password has been successfully updated. If this wasn't you, please contact support immediately.",
+        "info"
+      )
 
       res.status(httpStatus.OK).json({
         success: true,
@@ -504,18 +498,11 @@ export default class AdminController {
         isRead: false
       })
 
-      const admin = await AdminModel.findOne()
-      if (admin) {
-        await AdminNotificationModel.create({
-          admin: admin._id,
-          title: `Clinic ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-          message: `Clinic "${clinic.clinicName}" has been marked as ${status}${
-            reason ? `. Reason: ${reason}` : ""
-          }`,
-          type: "info",
-          isRead: false
-        })
-      }
+      await notifyAdmin(
+        `Clinic ${status.charAt(0).toUpperCase() + status.slice(1)}`,
+        `Clinic "${clinic.clinicName}" has been marked as ${status}${reason ? `. Reason: ${reason}` : ""}`,
+        "info"
+      )
 
       // Optionally send email
       await SmtpServiceClinic.sendStatusUpdateEmail(clinic, status, reason)
@@ -556,12 +543,12 @@ export default class AdminController {
         throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
       }
 
-      if (!clinic.certificate || !clinic.certificate.file) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Clinic has not uploaded a certificate."
-        )
-      }
+      // if (!clinic.certificate || !clinic.certificate.file) {
+      //   throw new AppError(
+      //     httpStatus.BAD_REQUEST,
+      //     "Clinic has not uploaded a certificate."
+      //   )
+      // }
 
       clinic.certificate.status = status
       clinic.certificate.status = status
@@ -2498,6 +2485,123 @@ export default class AdminController {
       res.status(httpStatus.OK).json({
         success: true,
         message: "All notifications cleared successfully."
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  public static async createPractitionerCategory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      handleRequiredFields(req, ["name", "type"])
+
+      const { name, type, description } = req.body
+
+      const exists = await practitionerCategoryModel.exists({
+        name: new RegExp(`^${name}$`, "i"),
+        type
+      })
+
+      if (exists) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "Category already exists for this type."
+        )
+      }
+
+      await practitionerCategoryModel.create({
+        name,
+        type,
+        description
+      })
+
+      res.status(httpStatus.CREATED).json({
+        success: true,
+        message: "Category created successfully."
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  public static async updatePractitionerCategory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { id } = req.params
+      const { name, type, description } = req.body
+
+      const category = await practitionerCategoryModel.findById(id)
+      if (!category) {
+        throw new AppError(httpStatus.NOT_FOUND, "Category not found.")
+      }
+
+      category.name = name || category.name
+      category.type = type || category.type
+      category.description = description || category.description
+
+      await category.save()
+
+      res.status(httpStatus.OK).json({
+        success: true,
+        message: "Category updated successfully."
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  public static async deletePractitionerCategory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { id } = req.params
+
+      const category = await practitionerCategoryModel.findById(id)
+      if (!category) {
+        throw new AppError(httpStatus.NOT_FOUND, "Category not found.")
+      }
+
+      const categoryInUse = await clinicModel.exists({ categories: id })
+      if (categoryInUse) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "Category is in use by one or more clinics. Cannot delete."
+        )
+      }
+
+      await category.deleteOne()
+
+      res.status(httpStatus.OK).json({
+        success: true,
+        message: "Category deleted successfully."
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  static async getAllCategoriesForAdmin(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const categories = await practitionerCategoryModel
+        .find()
+        .sort({ createdAt: -1 })
+
+      res.status(httpStatus.OK).json({
+        success: true,
+        data: categories
       })
     } catch (error) {
       next(error)

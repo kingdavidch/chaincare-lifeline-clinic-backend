@@ -12,12 +12,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.formatPhone = exports.formatDOB = exports.generateOrderID = exports.generateEmailOTP = exports.uploadToCloudinary = exports.validateObjectId = exports.handleRequiredFields = void 0;
+exports.formatCase = exports.formatPhone = exports.formatDOB = exports.generateOrderID = exports.generateEmailOTP = exports.uploadToCloudinary = exports.validateObjectId = exports.handleRequiredFields = void 0;
 exports.getClinicId = getClinicId;
 exports.getAdminId = getAdminId;
 exports.getPatientId = getPatientId;
 exports.escapeRegex = escapeRegex;
 exports.validatePhoneWithPawaPay = validatePhoneWithPawaPay;
+exports.formatAddress = formatAddress;
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const axios_1 = __importDefault(require("axios"));
 require("dotenv/config");
@@ -27,7 +28,19 @@ const otp_generator_1 = __importDefault(require("otp-generator"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const app_error_1 = __importDefault(require("./app.error"));
 const handleRequiredFields = (req, requiredFields) => {
-    const missingFields = requiredFields.filter((field) => !(field in req.body));
+    const missingFields = requiredFields.filter((field) => {
+        const keys = field.split(".");
+        let value = req.body;
+        for (const key of keys) {
+            if (value && key in value) {
+                value = value[key];
+            }
+            else {
+                return true;
+            }
+        }
+        return false;
+    });
     if (missingFields.length > 0) {
         throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Please ensure all required fields are provided.");
     }
@@ -136,3 +149,18 @@ const formatPhone = (phone) => {
     return phone.startsWith("+") ? phone : `+250${phone.replace(/^0/, "")}`;
 };
 exports.formatPhone = formatPhone;
+const formatCase = (str) => str === null || str === void 0 ? void 0 : str.replace(/\b\w/g, (c) => c.toUpperCase());
+exports.formatCase = formatCase;
+function formatAddress(location) {
+    if (!location)
+        return "Unknown Address";
+    return [
+        location.street,
+        location.cityOrDistrict,
+        location.stateOrProvince,
+        location.postalCode
+    ]
+        .filter(Boolean)
+        .map((part) => part === null || part === void 0 ? void 0 : part.toString().trim())
+        .join(", ");
+}

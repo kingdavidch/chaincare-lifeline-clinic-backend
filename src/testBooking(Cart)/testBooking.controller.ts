@@ -9,6 +9,8 @@ import TestBookingModel from "./testBooking.model"
 import moment from "moment-timezone"
 import { getTimezoneForCountry } from "../utils/timezoneMap"
 import { revalidateDiscount } from "../services/discount.service"
+import orderModel from "../order/order.model"
+import { AvailabilityModel } from "../availability/availability.model"
 
 export default class TestBookingController {
   public static async addToCart(
@@ -18,20 +20,11 @@ export default class TestBookingController {
   ) {
     try {
       const patientId = getPatientId(req)
-      const { testId, clinicId, individuals, date, time } = req.body
-      handleRequiredFields(req, [
-        "testId",
-        "clinicId",
-        "individuals",
-        "date"
-        // "time"
-      ])
+      const { testId, clinicId, date, time } = req.body
 
-      if (!Number.isInteger(individuals) || individuals < 1) {
-        throw new AppError(httpStatus.BAD_REQUEST, "Invalid quantity.")
-      }
+      handleRequiredFields(req, ["testId", "clinicId", "date", "time"])
 
-      const clinic = await clinicModel.findById(clinicId)
+      const clinic = await clinicModel.findOne({ clinicId })
       if (!clinic) throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
 
       const test = await TestModel.findById(testId)
@@ -40,28 +33,121 @@ export default class TestBookingController {
       const existingCartItem = await TestBookingModel.findOne({
         patient: patientId,
         test: testId,
-        clinic: clinicId,
+        clinic: clinic._id,
         status: "pending"
       })
+
       if (existingCartItem) {
         return res.status(httpStatus.BAD_REQUEST).json({
           success: false,
-          message:
-            "Appointment is already in your cart. You can increase the quantity."
+          message: "This appointment is already in your cart."
         })
       }
 
       const timezone = getTimezoneForCountry(clinic.country)
       const scheduledAt = moment
-        .tz(`${date} ${time}`, "YYYY-MM-DD HH:mm", timezone)
+        .tz(`${date} ${time}`, "YYYY-MM-DD hhA", timezone)
         .toDate()
 
-      const conflict = await TestBookingModel.findOne({
-        clinic: clinicId,
-        scheduledAt,
-        status: { $in: ["pending", "booked"] }
+      const dayOfWeek = moment(scheduledAt)
+        .tz(timezone)
+        .format("dddd")
+        .toLowerCase()
+
+      const availability = await AvailabilityModel.findOne({
+        clinic: clinic._id,
+        day: dayOfWeek
       })
-      if (conflict) {
+
+      if (!availability) {
+        throw new AppError(
+          httpStatus.CONFLICT,
+          `Clinic is not available on ${dayOfWeek}`
+        )
+      }
+
+      if (availability.isClosed) {
+        throw new AppError(httpStatus.CONFLICT, "Clinic is closed on this day")
+      }
+
+      // --- Parse time string like "12PM", "1PM" into 24-hour number ---
+      const parseTimeToHour = (t: string) => {
+        const match = t.match(/(\d+)(AM|PM)/)
+        if (!match)
+          throw new AppError(httpStatus.BAD_REQUEST, "Invalid time format")
+        let hour = parseInt(match[1], 10)
+        const period = match[2]
+        if (period === "PM" && hour !== 12) hour += 12
+        if (period === "AM" && hour === 12) hour = 0
+        return hour
+      }
+
+      let requestedStartHour: number
+      let requestedEndHour: number | null = null
+
+      if (time.includes("-")) {
+        const [start, end] = time
+          .split("-")
+          .map((t: string) => parseTimeToHour(t.trim()))
+        requestedStartHour = start
+        requestedEndHour = end
+      } else {
+        requestedStartHour = parseTimeToHour(time)
+      }
+
+      const isWithinRange = availability.timeRanges.some((range) => {
+        if (requestedEndHour !== null) {
+          return (
+            requestedStartHour >= range.openHour &&
+            requestedEndHour <= range.closeHour
+          )
+        } else {
+          return (
+            requestedStartHour >= range.openHour &&
+            requestedStartHour < range.closeHour
+          )
+        }
+      })
+
+      if (!isWithinRange) {
+        throw new AppError(
+          httpStatus.CONFLICT,
+          `Clinic is not available at ${time} on ${dayOfWeek}`
+        )
+      }
+
+      const startOfDay = moment
+        .tz(scheduledAt, timezone)
+        .startOf("day")
+        .toDate()
+      const endOfDay = moment.tz(scheduledAt, timezone).endOf("day").toDate()
+
+      const [authBookings, publicOrders] = await Promise.all([
+        TestBookingModel.find({
+          clinic: clinic._id,
+          scheduledAt: { $gte: startOfDay, $lte: endOfDay },
+          status: { $in: ["pending", "booked"] }
+        }),
+        orderModel.find({
+          clinic: clinic._id,
+          "tests.scheduledAt": { $gte: startOfDay, $lte: endOfDay },
+          "tests.status": { $in: ["pending", "booked"] }
+        })
+      ])
+
+      const bookedTimes = new Set<string>()
+      authBookings.forEach((b) =>
+        bookedTimes.add(moment(b.scheduledAt).format("hhA"))
+      )
+      publicOrders.forEach((o) =>
+        o.tests.forEach((t) => {
+          if (t.scheduledAt)
+            bookedTimes.add(moment(t.scheduledAt).format("hhA"))
+        })
+      )
+
+      const requestedSlot = moment(scheduledAt).format("hhA")
+      if (bookedTimes.has(requestedSlot)) {
         throw new AppError(
           httpStatus.CONFLICT,
           "This time slot is already booked. Please choose another."
@@ -70,13 +156,11 @@ export default class TestBookingController {
 
       const testLocation =
         test.homeCollection === "available" ? "home" : "on-site"
-      const subtotal = test.price * individuals
 
       const booking = await TestBookingModel.create({
         patient: patientId,
         clinic: clinic._id,
         test: test._id,
-        individuals,
         price: test.price,
         status: "pending",
         testLocation,
@@ -87,7 +171,7 @@ export default class TestBookingController {
           code: null,
           percentage: 0,
           discountAmount: 0,
-          finalPrice: subtotal,
+          finalPrice: test.price,
           expiresAt: null
         }
       })
@@ -146,13 +230,11 @@ export default class TestBookingController {
             scheduledAt: item.scheduledAt,
             price: test.price,
             currencySymbol: test.currencySymbol,
-            individuals: item.individuals,
             discount: {
               code: item.discount?.code ?? null,
               percentage: item.discount?.percentage ?? 0,
               discountAmount: item.discount?.discountAmount ?? 0,
-              finalPrice:
-                item.discount?.finalPrice ?? test.price * item.individuals
+              finalPrice: item.discount?.finalPrice ?? test.price
             }
           }
         })
@@ -204,58 +286,6 @@ export default class TestBookingController {
     }
   }
 
-  public static async updateQuantity(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) {
-    try {
-      const patientId = getPatientId(req)
-      const { bookingId } = req.params
-      const { action } = req.body
-
-      if (!["increase", "decrease"].includes(action)) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Invalid action. Use 'increase' or 'decrease'."
-        )
-      }
-
-      const booking = await TestBookingModel.findOne({
-        _id: bookingId,
-        patient: patientId,
-        status: "pending"
-      })
-      if (!booking)
-        throw new AppError(httpStatus.NOT_FOUND, "Item not found in cart.")
-
-      if (action === "increase") {
-        booking.individuals += 1
-      } else {
-        if (booking.individuals <= 1) {
-          throw new AppError(
-            httpStatus.BAD_REQUEST,
-            "Cannot have less than 1 individual."
-          )
-        }
-        booking.individuals -= 1
-      }
-
-      await revalidateDiscount(booking)
-
-      res.status(httpStatus.OK).json({
-        success: true,
-        message: `Quantity ${action}d successfully.`,
-        data: {
-          individuals: booking.individuals,
-          discount: booking.discount
-        }
-      })
-    } catch (error) {
-      next(error)
-    }
-  }
-
   public static async clearCart(
     req: Request,
     res: Response,
@@ -275,54 +305,6 @@ export default class TestBookingController {
       res.status(httpStatus.OK).json({
         success: true,
         message: "Cart cleared successfully."
-      })
-    } catch (error) {
-      next(error)
-    }
-  }
-
-  public static async getAvailableSlots(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) {
-    try {
-      const { clinicId } = req.params
-      const { date } = req.query
-
-      if (!date) throw new AppError(httpStatus.BAD_REQUEST, "Date is required")
-
-      const clinic = await clinicModel.findById(clinicId)
-      if (!clinic) throw new AppError(httpStatus.NOT_FOUND, "Clinic not found")
-
-      const openHour = 9
-      const closeHour = 17 // inclusive (9 → 17)
-
-      const timezone = getTimezoneForCountry(clinic.country)
-      const slots: string[] = []
-
-      for (let hour = openHour; hour <= closeHour; hour++) {
-        const slot = moment.tz(
-          `${date} ${hour}:00`,
-          "YYYY-MM-DD HH:mm",
-          timezone
-        )
-
-        const conflict = await TestBookingModel.findOne({
-          clinic: clinicId,
-          scheduledAt: slot.toDate(),
-          status: "booked"
-        })
-
-        if (!conflict) {
-          slots.push(`${String(hour).padStart(2, "0")}:00`)
-        }
-      }
-
-      res.status(httpStatus.OK).json({
-        success: true,
-        message: "Available slots retrieved successfully",
-        slots
       })
     } catch (error) {
       next(error)

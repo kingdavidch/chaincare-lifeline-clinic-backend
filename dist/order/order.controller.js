@@ -19,8 +19,6 @@ const http_status_1 = __importDefault(require("http-status"));
 const mongoose_1 = __importDefault(require("mongoose"));
 const uuid_1 = require("uuid");
 const __1 = require("..");
-const admin_model_1 = __importDefault(require("../admin/admin.model"));
-const admin_notification_model_1 = __importDefault(require("../admin/admin.notification.model"));
 const clinic_model_1 = __importDefault(require("../clinic/clinic.model"));
 const clinic_notification_model_1 = __importDefault(require("../clinic/clinic.notification.model"));
 const constant_1 = require("../constant");
@@ -39,13 +37,17 @@ const utils_2 = require("./utils");
 const moment_timezone_1 = __importDefault(require("moment-timezone"));
 const timezoneMap_1 = require("../utils/timezoneMap");
 const discount_service_1 = require("../services/discount.service");
+const utils_3 = require("../admin/utils");
+const discount_model_1 = __importDefault(require("../discount/discount.model"));
+const availability_model_1 = require("../availability/availability.model");
+const pendingpublicorder_model_1 = require("./pendingpublicorder.model");
 class OrderController {
     /**
      * Checkout (Place an Order)
      */
-    static checkout(req, res, next) {
+    static checkout(req, res) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
             try {
                 const patientId = (0, utils_1.getPatientId)(req);
                 const { paymentMethod, deliveryAddress, insuranceDetails, deliveryMethod, phoneNumber } = req.body;
@@ -84,14 +86,13 @@ class OrderController {
                     const testData = testMap.get(item.test.toString());
                     const testImage = ((_a = allTestItem.find((img) => img.name.toLowerCase() === (testData === null || testData === void 0 ? void 0 : testData.testName.toLowerCase()))) === null || _a === void 0 ? void 0 : _a.image) || "";
                     const basePrice = (_b = testData === null || testData === void 0 ? void 0 : testData.price) !== null && _b !== void 0 ? _b : 0;
-                    const subtotal = basePrice * item.individuals;
+                    const subtotal = basePrice;
                     const finalPrice = ((_c = item.discount) === null || _c === void 0 ? void 0 : _c.finalPrice) && item.discount.finalPrice > 0
                         ? item.discount.finalPrice
                         : subtotal;
                     const preparedTest = {
                         test: item.test,
                         testName: (_d = testData === null || testData === void 0 ? void 0 : testData.testName) !== null && _d !== void 0 ? _d : "Unknown Test",
-                        individuals: item.individuals,
                         price: basePrice,
                         turnaroundTime: (_e = testData === null || testData === void 0 ? void 0 : testData.turnaroundTime) !== null && _e !== void 0 ? _e : "N/A",
                         description: (_f = testData === null || testData === void 0 ? void 0 : testData.description) !== null && _f !== void 0 ? _f : "N/A",
@@ -117,12 +118,25 @@ class OrderController {
                 const clinicIds = Object.keys(groupedByClinic);
                 const clinics = yield clinic_model_1.default
                     .find({ _id: { $in: clinicIds } })
-                    .select("onlineStatus clinicName");
+                    .select("onlineStatus clinicName deliveryMethods");
+                const selectedDelivery = (0, utils_2.deliveryMethodToNumber)(deliveryMethod);
+                const unsupportedDelivery = clinics.find((clinic) => { var _a; return !((_a = clinic.deliveryMethods) === null || _a === void 0 ? void 0 : _a.includes(selectedDelivery)); });
+                if (unsupportedDelivery) {
+                    const deliveryMap = {
+                        0: "Home Service",
+                        1: "In-Person",
+                        2: "Online"
+                    };
+                    const supportedMethods = (unsupportedDelivery.deliveryMethods || [])
+                        .map((m) => deliveryMap[m])
+                        .join(", ") || "none";
+                    throw new app_error_1.default(http_status_1.default.FORBIDDEN, `Clinic "${(_g = unsupportedDelivery.clinicName) === null || _g === void 0 ? void 0 : _g.toUpperCase()}" does not support the selected delivery method. Supported methods: ${supportedMethods}.`);
+                }
                 const offlineClinic = clinics.find((clinic) => clinic.onlineStatus === "offline");
                 if (offlineClinic) {
                     throw new app_error_1.default(http_status_1.default.FORBIDDEN, `Clinic "${offlineClinic.clinicName}" is currently offline and cannot accept orders.`);
                 }
-                const name = (_g = patient === null || patient === void 0 ? void 0 : patient.fullName) === null || _g === void 0 ? void 0 : _g.trim();
+                const name = (_h = patient === null || patient === void 0 ? void 0 : patient.fullName) === null || _h === void 0 ? void 0 : _h.trim();
                 if (name.length < 5) {
                     throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Full name must be at least 10 characters long for payment to be processed successfully.");
                 }
@@ -151,30 +165,17 @@ class OrderController {
                             metadata: [
                                 {
                                     fieldName: "patientId",
-                                    fieldValue: (patientId === null || patientId === void 0 ? void 0 : patientId.slice(0, 64)) || ""
+                                    fieldValue: patientId === null || patientId === void 0 ? void 0 : patientId.toString()
                                 },
                                 { fieldName: "service", fieldValue: "clinic" },
                                 {
                                     fieldName: "callbackUrl",
                                     fieldValue: `${process.env.BACKEND_URL}/api/v1/payment/p/d-w`
                                 },
-                                { fieldName: "orderId", fieldValue: orderId.slice(0, 64) },
-                                {
-                                    fieldName: "phoneNumber",
-                                    fieldValue: phoneNumber.slice(0, 64)
-                                },
                                 { fieldName: "paymentMethod", fieldValue: "pawa_pay" },
-                                {
-                                    fieldName: "totalAmount",
-                                    fieldValue: allClinicTotals.toString().slice(0, 64)
-                                },
                                 {
                                     fieldName: "deliveryMethod",
                                     fieldValue: String(deliveryMethod)
-                                },
-                                {
-                                    fieldName: "deliveryAddress",
-                                    fieldValue: JSON.stringify(deliveryAddress).slice(0, 64)
                                 }
                             ]
                         };
@@ -186,7 +187,7 @@ class OrderController {
                             timeout: 10000
                         });
                         if (response.data.status !== "ACCEPTED") {
-                            throw new app_error_1.default(http_status_1.default.BAD_REQUEST, ((_h = response === null || response === void 0 ? void 0 : response.data) === null || _h === void 0 ? void 0 : _h.rejectionReason) || "Payment not accepted");
+                            throw new app_error_1.default(http_status_1.default.BAD_REQUEST, ((_j = response === null || response === void 0 ? void 0 : response.data) === null || _j === void 0 ? void 0 : _j.rejectionReason) || "Payment not accepted");
                         }
                         return res.status(http_status_1.default.CREATED).json({
                             success: true,
@@ -219,7 +220,7 @@ class OrderController {
                             .select("clinicName supportInsurance");
                         const unsupported = clinics.find((clinic) => { var _a; return !((_a = clinic.supportInsurance) === null || _a === void 0 ? void 0 : _a.includes(selectedInsuranceId)); });
                         if (unsupported) {
-                            throw new app_error_1.default(http_status_1.default.FORBIDDEN, `Clinic "${(_j = unsupported.clinicName) === null || _j === void 0 ? void 0 : _j.toUpperCase()}" does not support this insurance.`);
+                            throw new app_error_1.default(http_status_1.default.FORBIDDEN, `Clinic "${(_k = unsupported.clinicName) === null || _k === void 0 ? void 0 : _k.toUpperCase()}" does not support this insurance.`);
                         }
                         const allCreatedOrders = [];
                         for (const [clinicId, entry] of Object.entries(groupedByClinic)) {
@@ -240,11 +241,13 @@ class OrderController {
                             const populatedOrder = yield order_model_1.default
                                 .findById(order._id)
                                 .populate("clinic")
-                                .populate("patient")
-                                .lean();
+                                .populate("patient");
                             if (populatedOrder) {
                                 yield smtp_order_service_1.default.sendOrderConfirmationEmail(populatedOrder);
                                 yield smtp_order_service_1.default.sendClinicOrderNotificationEmail(populatedOrder);
+                            }
+                            if (populatedOrder) {
+                                yield (0, utils_2.createCalendarEventsForOrder)(populatedOrder);
                             }
                             yield patient_notification_model_1.default.create([
                                 {
@@ -292,18 +295,7 @@ class OrderController {
                                     isRead: false
                                 }
                             ]);
-                            const admin = yield admin_model_1.default.findOne();
-                            if (admin) {
-                                yield admin_notification_model_1.default.create([
-                                    {
-                                        admin: admin._id,
-                                        title: "New Order Placed",
-                                        message: `Patient "${patient.fullName}" placed a new order (${orderId}) via insurance`,
-                                        type: "order",
-                                        isRead: false
-                                    }
-                                ]);
-                            }
+                            yield (0, utils_3.notifyAdmin)("New Order Placed", `Patient "${patient.fullName}" placed a new order (${orderId}) via insurance`, "order");
                             allCreatedOrders.push(orderId);
                         }
                         return res.status(http_status_1.default.CREATED).json({
@@ -317,8 +309,27 @@ class OrderController {
                 }
             }
             catch (error) {
-                console.log(error);
-                next(error);
+                if (axios_1.default.isAxiosError(error)) {
+                    return res.status(http_status_1.default.BAD_REQUEST).json({
+                        success: false,
+                        message: ((_m = (_l = error.response) === null || _l === void 0 ? void 0 : _l.data) === null || _m === void 0 ? void 0 : _m.rejectionReason) || error.message,
+                        data: ((_o = error.response) === null || _o === void 0 ? void 0 : _o.data) || null
+                    });
+                }
+                else if (error instanceof app_error_1.default) {
+                    return res.status(error.statusCode || http_status_1.default.BAD_REQUEST).json({
+                        success: false,
+                        message: error.message,
+                        data: null
+                    });
+                }
+                else {
+                    return res.status(http_status_1.default.INTERNAL_SERVER_ERROR).json({
+                        success: false,
+                        message: "An unexpected error occurred",
+                        data: error.message || null
+                    });
+                }
             }
         });
     }
@@ -385,7 +396,6 @@ class OrderController {
                             testId: testItem.test,
                             testImage,
                             testName: test === null || test === void 0 ? void 0 : test.testName,
-                            individuals: testItem === null || testItem === void 0 ? void 0 : testItem.individuals,
                             date: order.createdAt
                                 ? (0, moment_timezone_1.default)(order.createdAt)
                                     .tz(timezone)
@@ -397,7 +407,7 @@ class OrderController {
                             clinicName: clinic === null || clinic === void 0 ? void 0 : clinic.clinicName,
                             price: testItem === null || testItem === void 0 ? void 0 : testItem.price,
                             currencySymbol: test === null || test === void 0 ? void 0 : test.currencySymbol,
-                            status: testItem.status,
+                            status: (0, utils_2.formatTestStatus)(testItem.status),
                             statusReason: testItem.statusReason || null,
                             paymentStatus: order.paymentStatus
                         };
@@ -456,12 +466,7 @@ class OrderController {
                     .select("name image")
                     .lean();
                 const testResults = yield test_result_model_1.default
-                    .find({
-                    clinic: clinicId,
-                    patient: order.patient._id,
-                    order: order._id,
-                    test: { $in: order.tests.map((t) => t.test) }
-                })
+                    .find(Object.assign(Object.assign({ clinic: clinicId }, (order.patient ? { patient: order.patient._id } : {})), { order: order._id, test: { $in: order.tests.map((t) => t.test) } }))
                     .select("test resultSent")
                     .lean();
                 const testResultMap = new Map();
@@ -475,7 +480,9 @@ class OrderController {
                     const image = ((_a = allTestItems.find((item) => item.name.toLowerCase() === test.testName.toLowerCase())) === null || _a === void 0 ? void 0 : _a.image) ||
                         (testRef === null || testRef === void 0 ? void 0 : testRef.image) ||
                         "";
-                    const resultSent = testResultMap.get(testRef._id.toString()) || false;
+                    const resultSent = order.patient
+                        ? testResultMap.get(testRef._id.toString()) || false
+                        : false;
                     return {
                         _id: testRef._id,
                         testName: test.testName,
@@ -485,6 +492,9 @@ class OrderController {
                         resultSent,
                         status: test.status,
                         date: (0, moment_timezone_1.default)(test.scheduledAt || test.date).format("YYYY-MM-DD hh:mm A"),
+                        scheduledAt: test.scheduledAt || null,
+                        googleMeetLink: test.googleMeetLink || null,
+                        googleEventLink: test.googleEventLink || null,
                         statusReason: test.statusReason || null,
                         statusHistory: test.statusHistory || []
                     };
@@ -542,7 +552,7 @@ class OrderController {
                 }
                 const orders = yield order_model_1.default
                     .find(filter)
-                    .select("orderId patient tests totalAmount createdAt paymentMethod")
+                    .select("orderId patient tests totalAmount createdAt paymentMethod publicBooker isPublicBooking")
                     .sort({ createdAt: -1 })
                     .skip(skip)
                     .limit(limitNumber)
@@ -551,17 +561,17 @@ class OrderController {
                     clinic: clinicId
                 });
                 const formattedOrders = yield Promise.all(orders.map((order) => __awaiter(this, void 0, void 0, function* () {
-                    var _a, _b, _c, _d;
-                    const patient = yield patient_model_1.default
-                        .findById(order.patient)
-                        .select("fullName");
+                    var _a, _b, _c, _d, _e;
+                    const patient = order.patient &&
+                        (yield patient_model_1.default.findById(order.patient).select("fullName"));
+                    const CustomerName = (patient === null || patient === void 0 ? void 0 : patient.fullName) || ((_a = order === null || order === void 0 ? void 0 : order.publicBooker) === null || _a === void 0 ? void 0 : _a.fullName) || "N/A";
                     const clinicDoc = yield clinic_model_1.default
                         .findById(clinicId)
                         .select("country");
                     const timezone = (0, timezoneMap_1.getTimezoneForCountry)(clinicDoc === null || clinicDoc === void 0 ? void 0 : clinicDoc.country);
                     let currencySymbol = "RWF";
-                    if ((_a = order.tests) === null || _a === void 0 ? void 0 : _a.length) {
-                        const testRef = (_b = order.tests[0]) === null || _b === void 0 ? void 0 : _b.test;
+                    if ((_b = order.tests) === null || _b === void 0 ? void 0 : _b.length) {
+                        const testRef = (_c = order.tests[0]) === null || _c === void 0 ? void 0 : _c.test;
                         if (testRef) {
                             const testDoc = yield test_model_1.default
                                 .findById(testRef)
@@ -580,7 +590,7 @@ class OrderController {
                             return names.join(", ");
                         return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
                     })();
-                    const testStatuses = ((_c = order.tests) === null || _c === void 0 ? void 0 : _c.map((t) => t.status)) || [];
+                    const testStatuses = ((_d = order.tests) === null || _d === void 0 ? void 0 : _d.map((t) => t.status)) || [];
                     const uniqueStatuses = [...new Set(testStatuses)];
                     let overallStatus = "pending";
                     if (uniqueStatuses.length === 1) {
@@ -594,7 +604,7 @@ class OrderController {
                         clinic: clinicId,
                         patient: order.patient,
                         order: order._id,
-                        test: { $in: ((_d = order.tests) === null || _d === void 0 ? void 0 : _d.map((t) => t.test)) || [] }
+                        test: { $in: ((_e = order.tests) === null || _e === void 0 ? void 0 : _e.map((t) => t.test)) || [] }
                     })
                         .select("resultSent")
                         .lean();
@@ -602,7 +612,8 @@ class OrderController {
                     return {
                         id: order === null || order === void 0 ? void 0 : order._id,
                         orderId: order === null || order === void 0 ? void 0 : order.orderId,
-                        CustomerName: (patient === null || patient === void 0 ? void 0 : patient.fullName) || "N/A",
+                        CustomerName,
+                        isPublicBooking: order === null || order === void 0 ? void 0 : order.isPublicBooking,
                         Test: testNames,
                         Date: moment_timezone_1.default.utc(order.createdAt).tz(timezone).format("DD-MM-YYYY"),
                         Time: moment_timezone_1.default.utc(order.createdAt).tz(timezone).format("hh:mm A"),
@@ -659,7 +670,7 @@ class OrderController {
                 }
                 const order = yield order_model_1.default
                     .findOne({ _id: id, clinic: clinicId })
-                    .populate("patient", "fullName email phoneNumber")
+                    .populate("patient", "fullName email phoneNumber expoPushToken")
                     .populate("clinic", "clinicName location currencySymbol");
                 if (!order) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Order not found.");
@@ -678,51 +689,30 @@ class OrderController {
                 if (status === "cancelled") {
                     const disallowedStates = ["result_ready", "result_sent"];
                     if (disallowedStates.includes(testItem.status)) {
-                        throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Cannot cancel a test that is already completed or result has been sent.");
+                        throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Cannot cancel a completed test.");
                     }
                     if (order.paymentMethod === "insurance" && !statusReason) {
                         throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Cancelling insurance-based orders requires a reason.");
                     }
                 }
-                const statusFlow = [
-                    "pending",
-                    "sample_collected",
-                    "processing",
-                    "result_ready",
-                    "result_sent"
-                ];
-                const currentStatus = testItem.status;
-                const currentIndex = statusFlow.indexOf(currentStatus);
-                const finalIndex = statusFlow.indexOf(status);
-                const statusesToFill = currentIndex === -1
-                    ? statusFlow.slice(0, finalIndex + 1)
-                    : statusFlow.slice(currentIndex + 1, finalIndex + 1);
                 const now = new Date();
-                const historyEntries = statusesToFill.map((s) => ({
-                    status: s,
-                    changedAt: now
-                }));
                 testItem.status = status;
                 testItem.statusReason = requiresReason ? statusReason : null;
-                if (!Array.isArray(testItem.statusHistory)) {
-                    testItem.statusHistory = [];
-                }
-                testItem.statusHistory.push(...historyEntries);
+                testItem.statusHistory = [
+                    ...(testItem.statusHistory || []),
+                    { status, changedAt: now }
+                ];
                 yield order.save();
-                const patient = yield patient_model_1.default
-                    .findById(order.patient._id)
-                    .select("fullName email phoneNumber expoPushToken");
-                const clinic = yield clinic_model_1.default
-                    .findById(clinicId)
-                    .select("clinicName location currencySymbol");
-                const admin = yield admin_model_1.default.findOne();
-                if (patient && clinic) {
-                    try {
-                        yield smtp_order_service_1.default.sendOrderStatusUpdateEmail(order, testItem, clinic, patient);
-                    }
-                    catch (emailErr) {
-                        console.error("Failed to send status update email:", emailErr);
-                    }
+                const clinic = order.clinic;
+                const patient = order.patient;
+                const isPublic = order.isPublicBooking || !!order.publicBooker;
+                try {
+                    yield smtp_order_service_1.default.sendOrderStatusUpdateEmail(order, testItem, clinic, patient);
+                }
+                catch (emailErr) {
+                    console.error("Failed to send status update email:", emailErr);
+                }
+                if (!isPublic && patient) {
                     yield patient_notification_model_1.default.create({
                         patient: patient._id,
                         title: "Test Status Updated",
@@ -743,23 +733,15 @@ class OrderController {
                             }
                         });
                     }
-                    if (admin) {
-                        yield admin_notification_model_1.default.create({
-                            admin: admin._id,
-                            title: "Test Status Updated by Clinic",
-                            message: `The clinic "${clinic.clinicName}" has updated the status of test "${(0, utils_2.formatCase)(testItem.testName)}" in order ${order.orderId} to "${status.replace(/_/g, " ")}".`,
-                            type: "order",
-                            isRead: false
-                        });
-                    }
-                    yield clinic_notification_model_1.default.create({
-                        clinic: clinic._id,
-                        title: "Test Status Updated",
-                        message: `Status of test "${(0, utils_2.formatCase)(testItem.testName)}" in order ${order.orderId} has been updated to "${status.replace(/_/g, " ")}".`,
-                        type: "order",
-                        isRead: false
-                    });
                 }
+                yield (0, utils_3.notifyAdmin)("Test Status Updated by Clinic", `The clinic "${clinic.clinicName}" updated "${(0, utils_2.formatCase)(testItem.testName)}" in order ${order.orderId} to "${status.replace(/_/g, " ")}".`, "order");
+                yield clinic_notification_model_1.default.create({
+                    clinic: clinic._id,
+                    title: "Test Status Updated",
+                    message: `Status of "${(0, utils_2.formatCase)(testItem.testName)}" in order ${order.orderId} updated to "${status.replace(/_/g, " ")}".`,
+                    type: "order",
+                    isRead: false
+                });
                 __1.io.emit("orderTestStatus:update", {
                     clinicId,
                     orderId: order._id,
@@ -767,17 +749,19 @@ class OrderController {
                     status: testItem.status,
                     statusReason: testItem.statusReason,
                     statusHistory: testItem.statusHistory,
-                    patient: {
-                        _id: patient === null || patient === void 0 ? void 0 : patient._id,
-                        fullName: patient === null || patient === void 0 ? void 0 : patient.fullName,
-                        email: patient === null || patient === void 0 ? void 0 : patient.email,
-                        phoneNumber: patient === null || patient === void 0 ? void 0 : patient.phoneNumber
-                    },
+                    patient: !isPublic
+                        ? {
+                            _id: patient === null || patient === void 0 ? void 0 : patient._id,
+                            fullName: patient === null || patient === void 0 ? void 0 : patient.fullName,
+                            email: patient === null || patient === void 0 ? void 0 : patient.email,
+                            phoneNumber: patient === null || patient === void 0 ? void 0 : patient.phoneNumber
+                        }
+                        : null,
                     clinic: {
-                        _id: clinic === null || clinic === void 0 ? void 0 : clinic._id,
-                        clinicName: clinic === null || clinic === void 0 ? void 0 : clinic.clinicName,
-                        location: clinic === null || clinic === void 0 ? void 0 : clinic.location,
-                        currencySymbol: clinic === null || clinic === void 0 ? void 0 : clinic.currencySymbol
+                        _id: clinic._id,
+                        clinicName: clinic.clinicName,
+                        location: clinic.location,
+                        currencySymbol: clinic.currencySymbol
                     }
                 });
                 res.status(http_status_1.default.OK).json({
@@ -996,7 +980,6 @@ class OrderController {
                         testImage: testItem.testImage,
                         price: testItem.price,
                         currencySymbol: testRef === null || testRef === void 0 ? void 0 : testRef.currencySymbol,
-                        individuals: testItem.individuals,
                         turnaroundTime: (testRef === null || testRef === void 0 ? void 0 : testRef.turnaroundTime) || testItem.turnaroundTime,
                         description: (testRef === null || testRef === void 0 ? void 0 : testRef.description) || testItem.description,
                         status: testItem.status,
@@ -1082,6 +1065,238 @@ class OrderController {
             }
             catch (error) {
                 next(error);
+            }
+        });
+    }
+    static checkoutPublic(req, res) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f;
+            try {
+                (0, utils_1.handleRequiredFields)(req, [
+                    "clinicId",
+                    "testNo",
+                    "paymentMethod",
+                    "phoneNumber",
+                    "fullName",
+                    "email",
+                    "deliveryMethod",
+                    "date",
+                    "time"
+                ]);
+                const { clinicId, testNo, paymentMethod, phoneNumber, fullName, email, discountCode, deliveryMethod, deliveryAddress, date, time } = req.body;
+                const clinic = yield clinic_model_1.default.findOne({ clinicId });
+                if (!clinic)
+                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
+                const testDoc = yield test_model_1.default
+                    .findOne({ testNo: testNo, isDeleted: false })
+                    .select("testName price turnaroundTime description testImage");
+                if (!testDoc)
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid test selected.");
+                const timezone = (0, timezoneMap_1.getTimezoneForCountry)(clinic.country);
+                const scheduledAt = moment_timezone_1.default
+                    .tz(`${date} ${time}`, "YYYY-MM-DD HH:mm", timezone)
+                    .toDate();
+                const startOfDay = moment_timezone_1.default
+                    .tz(scheduledAt, timezone)
+                    .startOf("day")
+                    .toDate();
+                const endOfDay = moment_timezone_1.default.tz(scheduledAt, timezone).endOf("day").toDate();
+                const dayOfWeek = moment_timezone_1.default
+                    .tz(date, "YYYY-MM-DD", timezone)
+                    .format("dddd")
+                    .toLowerCase();
+                const availability = yield availability_model_1.AvailabilityModel.findOne({
+                    clinic: clinic._id,
+                    day: dayOfWeek
+                });
+                if (!availability)
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, "Clinic is not available on this day");
+                if (availability.isClosed)
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, "Clinic is closed on this day");
+                let requestedStartHour;
+                let requestedEndHour = null;
+                if (time.includes("-")) {
+                    const [start, end] = time
+                        .split("-")
+                        .map((t) => (0, utils_2.parseTimeToHour)(t.trim()));
+                    requestedStartHour = start;
+                    requestedEndHour = end;
+                }
+                else {
+                    requestedStartHour = Number(time.split(":")[0]);
+                }
+                const isWithinRange = availability.timeRanges.some((range) => {
+                    if (requestedEndHour !== null) {
+                        return (requestedStartHour >= range.openHour &&
+                            requestedEndHour <= range.closeHour);
+                    }
+                    else {
+                        return (requestedStartHour >= range.openHour &&
+                            requestedStartHour < range.closeHour);
+                    }
+                });
+                if (!isWithinRange) {
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, `Clinic is not available at ${time} on ${dayOfWeek}`);
+                }
+                const [authBookings, publicOrders] = yield Promise.all([
+                    testBooking_model_1.default.find({
+                        clinic: clinic._id,
+                        scheduledAt: { $gte: startOfDay, $lte: endOfDay },
+                        status: { $in: ["pending", "booked"] }
+                    }),
+                    order_model_1.default.find({
+                        clinic: clinic._id,
+                        "tests.scheduledAt": { $gte: startOfDay, $lte: endOfDay },
+                        "tests.status": { $in: ["pending", "booked"] }
+                    })
+                ]);
+                const bookedTimes = new Set();
+                authBookings.forEach((b) => bookedTimes.add((0, moment_timezone_1.default)(b.scheduledAt).format("HH:mm")));
+                publicOrders.forEach((o) => o.tests.forEach((t) => {
+                    if (t.scheduledAt)
+                        bookedTimes.add((0, moment_timezone_1.default)(t.scheduledAt).format("HH:mm"));
+                }));
+                const requestedSlot = (0, moment_timezone_1.default)(scheduledAt).format("HH:mm");
+                if (bookedTimes.has(requestedSlot))
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, "This time slot is already booked. Please choose another.");
+                let validatedDeliveryAddress = null;
+                if (deliveryMethod === 0) {
+                    (0, utils_1.handleRequiredFields)(req, [
+                        "deliveryAddress.address",
+                        "deliveryAddress.cityOrDistrict",
+                        "deliveryAddress.phoneNo"
+                    ]);
+                    validatedDeliveryAddress = {
+                        fullName,
+                        phoneNo: deliveryAddress.phoneNo,
+                        address: deliveryAddress.address,
+                        cityOrDistrict: deliveryAddress.cityOrDistrict
+                    };
+                }
+                else if (![1, 2].includes(deliveryMethod)) {
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid delivery method.");
+                }
+                let finalAmount = testDoc.price;
+                let appliedDiscount = undefined;
+                if (discountCode) {
+                    const now = moment_timezone_1.default.utc();
+                    const normalized = discountCode.toUpperCase();
+                    const discount = yield discount_model_1.default.findOne({
+                        clinic: clinic._id,
+                        code: normalized,
+                        status: 0,
+                        isDeleted: false,
+                        validUntil: { $gte: now.toDate() }
+                    });
+                    if (!discount)
+                        throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid discount code.");
+                    const discountAmount = (testDoc.price * discount.percentage) / 100;
+                    finalAmount = testDoc.price - discountAmount;
+                    appliedDiscount = {
+                        code: discount.code,
+                        percentage: discount.percentage,
+                        discountAmount,
+                        expiresAt: discount.validUntil
+                    };
+                }
+                const selectedDelivery = (0, utils_2.deliveryMethodToNumber)(deliveryMethod);
+                if (!clinic.deliveryMethods ||
+                    clinic.deliveryMethods.length === 0 ||
+                    !clinic.deliveryMethods.includes(selectedDelivery)) {
+                    const supported = ((_a = clinic.deliveryMethods) === null || _a === void 0 ? void 0 : _a.map((m) => {
+                        if (m === 0)
+                            return "Home service";
+                        if (m === 1)
+                            return "In-person";
+                        if (m === 2)
+                            return "Online session";
+                    }).join(", ")) || "none";
+                    throw new app_error_1.default(http_status_1.default.FORBIDDEN, `Clinic "${(_b = clinic.clinicName) === null || _b === void 0 ? void 0 : _b.toUpperCase()}" does not support this delivery method. Supported methods: ${supported}`);
+                }
+                if (paymentMethod.toLowerCase() !== "pawa_pay")
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid payment method.");
+                const prediction = yield (0, utils_1.validatePhoneWithPawaPay)(phoneNumber);
+                const predictedProvider = prediction.provider;
+                const depositId = (0, uuid_1.v4)();
+                const amountToSend = Math.round(finalAmount).toString();
+                const depositPayload = {
+                    depositId,
+                    amount: amountToSend,
+                    currency: "RWF",
+                    country: "RWA",
+                    correspondent: predictedProvider,
+                    payer: { type: "MSISDN", address: { value: phoneNumber } },
+                    customerTimestamp: new Date().toISOString(),
+                    statementDescription: "PawaPay Payment",
+                    metadata: [
+                        { fieldName: "service", fieldValue: "clinic" },
+                        {
+                            fieldName: "callbackUrl",
+                            fieldValue: `${process.env.BACKEND_URL}/api/v1/payment/p/d-w`
+                        },
+                        { fieldName: "paymentOrigin", fieldValue: "public" },
+                        { fieldName: "orderKey", fieldValue: depositId }
+                    ]
+                };
+                const response = yield axios_1.default.post(`${process.env.PAWAPAY_API_URL}/deposits`, depositPayload, {
+                    headers: {
+                        Authorization: `Bearer ${process.env.PAWAPAY_API_TOKEN}`,
+                        "Content-Type": "application/json"
+                    },
+                    timeout: 10000
+                });
+                if (response.data.status !== "ACCEPTED")
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, ((_c = response === null || response === void 0 ? void 0 : response.data) === null || _c === void 0 ? void 0 : _c.rejectionReason) || "Payment not accepted");
+                yield pendingpublicorder_model_1.PendingPublicOrder.create({
+                    orderKey: depositId,
+                    clinicId,
+                    testNo,
+                    fullName,
+                    email,
+                    phoneNumber,
+                    deliveryMethod,
+                    deliveryAddress: validatedDeliveryAddress,
+                    appliedDiscount: appliedDiscount !== null && appliedDiscount !== void 0 ? appliedDiscount : undefined,
+                    scheduledAt
+                });
+                return res.status(http_status_1.default.CREATED).json({
+                    success: true,
+                    message: "Payment initiated via PawaPay. Order will be created once payment is confirmed.",
+                    data: {
+                        transactionId: response.data.depositId,
+                        phoneNumber,
+                        email,
+                        amount: parseInt(amountToSend),
+                        finalAmount,
+                        discount: appliedDiscount,
+                        deliveryMethod,
+                        deliveryAddress: deliveryAddress,
+                        scheduledAt
+                    }
+                });
+            }
+            catch (error) {
+                if (axios_1.default.isAxiosError(error)) {
+                    return res.status(http_status_1.default.BAD_REQUEST).json({
+                        success: false,
+                        message: ((_e = (_d = error.response) === null || _d === void 0 ? void 0 : _d.data) === null || _e === void 0 ? void 0 : _e.rejectionReason) || error.message,
+                        data: ((_f = error.response) === null || _f === void 0 ? void 0 : _f.data) || null
+                    });
+                }
+                else if (error instanceof app_error_1.default) {
+                    return res.status(error.statusCode || http_status_1.default.BAD_REQUEST).json({
+                        success: false,
+                        message: error.message,
+                        data: null
+                    });
+                }
+                else {
+                    return res.status(http_status_1.default.INTERNAL_SERVER_ERROR).json({
+                        success: false,
+                        message: "An unexpected error occurred",
+                        data: error.message || null
+                    });
+                }
             }
         });
     }

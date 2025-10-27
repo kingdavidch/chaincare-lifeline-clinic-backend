@@ -29,7 +29,6 @@ discountRouter.delete(
 
 discountRouter.get(
   "/clinic/:clinicId",
-  PatientMiddleware.authenticate,
   asyncHandler(DiscountController.getActiveDiscountsForClinic)
 )
 
@@ -37,6 +36,11 @@ discountRouter.post(
   "/patient/apply",
   PatientMiddleware.authenticate,
   asyncHandler(DiscountController.applyDiscount)
+)
+
+discountRouter.post(
+  "/public/apply",
+  asyncHandler(DiscountController.applyDiscountPublic)
 )
 
 export default discountRouter

@@ -283,7 +283,6 @@ class TestResultController {
                         refNo: result.refNo,
                         resultFile: result.resultFile,
                         clinicName: (clinic === null || clinic === void 0 ? void 0 : clinic.clinicName) || "",
-                        individuals: testBooking.individuals,
                         date: new Date(result.uploadedAt).toLocaleDateString("en-US", {
                             weekday: "short",
                             day: "numeric",

@@ -16,9 +16,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const axios_1 = __importDefault(require("axios"));
 require("dotenv/config");
 const http_status_1 = __importDefault(require("http-status"));
-const mongoose_1 = __importDefault(require("mongoose"));
-const admin_model_1 = __importDefault(require("../admin/admin.model"));
-const admin_notification_model_1 = __importDefault(require("../admin/admin.notification.model"));
 const clinic_model_1 = __importDefault(require("../clinic/clinic.model"));
 const clinic_notification_model_1 = __importDefault(require("../clinic/clinic.notification.model"));
 const order_model_1 = __importDefault(require("../order/order.model"));
@@ -32,10 +29,9 @@ const utils_1 = require("../utils");
 const sendPushNotification_1 = require("../utils/sendPushNotification");
 const payment_service_1 = require("./payment.service");
 const withdrawal_model_1 = __importDefault(require("./withdrawal.model"));
-const subscription_model_1 = __importDefault(require("../subscription/subscription.model"));
-const subscription_plans_1 = require("../constant/subscription.plans");
-const date_fns_1 = require("date-fns");
 const utils_2 = require("../order/utils");
+const utils_3 = require("../admin/utils");
+const _1 = require(".");
 class PaymentController {
     static getChannels(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -106,7 +102,7 @@ class PaymentController {
     }
     static handleYellowCardWebhook(req, res) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g;
+            var _a, _b, _c, _d, _e, _f, _g, _h;
             try {
                 const data = req.body;
                 const transactionId = data === null || data === void 0 ? void 0 : data.id;
@@ -134,16 +130,7 @@ class PaymentController {
                             type: "payment",
                             isRead: false
                         });
-                        const admin = yield admin_model_1.default.findOne();
-                        if (admin) {
-                            yield admin_notification_model_1.default.create({
-                                admin: admin._id,
-                                title: "Payment Failed",
-                                message: `Order #${order.orderId} (YellowCard) failed: ${failureReason}`,
-                                type: "payment",
-                                isRead: false
-                            });
-                        }
+                        yield (0, utils_3.notifyAdmin)("Payment Failed", `Order #${order.orderId} (YellowCard) failed: ${failureReason}`, "payment");
                     }
                     res.status(http_status_1.default.OK).send(`Failure processed: ${failureReason}`);
                     return;
@@ -206,15 +193,20 @@ class PaymentController {
                     const clinicId = item.clinic.toString();
                     const testData = testMap.get(item.test.toString());
                     const testImage = ((_c = allTestItem.find((img) => img.name.toLowerCase() === (testData === null || testData === void 0 ? void 0 : testData.testName.toLowerCase()))) === null || _c === void 0 ? void 0 : _c.image) || "";
+                    const subtotal = (_d = testData === null || testData === void 0 ? void 0 : testData.price) !== null && _d !== void 0 ? _d : 0;
+                    const finalPrice = ((_e = item.discount) === null || _e === void 0 ? void 0 : _e.finalPrice) && item.discount.finalPrice > 0
+                        ? item.discount.finalPrice
+                        : subtotal;
                     const preparedTest = {
                         test: item.test,
-                        testName: (_d = testData === null || testData === void 0 ? void 0 : testData.testName) !== null && _d !== void 0 ? _d : "Unknown Test",
-                        individuals: item.individuals,
-                        price: (_e = testData === null || testData === void 0 ? void 0 : testData.price) !== null && _e !== void 0 ? _e : 0,
-                        turnaroundTime: (_f = testData === null || testData === void 0 ? void 0 : testData.turnaroundTime) !== null && _f !== void 0 ? _f : "N/A",
-                        description: (_g = testData === null || testData === void 0 ? void 0 : testData.description) !== null && _g !== void 0 ? _g : "N/A",
+                        testName: (_f = testData === null || testData === void 0 ? void 0 : testData.testName) !== null && _f !== void 0 ? _f : "Unknown Test",
+                        price: subtotal,
+                        turnaroundTime: (_g = testData === null || testData === void 0 ? void 0 : testData.turnaroundTime) !== null && _g !== void 0 ? _g : "N/A",
+                        description: (_h = testData === null || testData === void 0 ? void 0 : testData.description) !== null && _h !== void 0 ? _h : "N/A",
                         testImage,
                         date: item.date,
+                        time: item.time,
+                        scheduledAt: item.scheduledAt,
                         status: "pending",
                         statusHistory: [{ status: "pending", changedAt: new Date() }]
                     };
@@ -226,8 +218,7 @@ class PaymentController {
                         };
                     }
                     groupedByClinic[clinicId].tests.push(preparedTest);
-                    groupedByClinic[clinicId].totalAmount +=
-                        preparedTest.price * item.individuals;
+                    groupedByClinic[clinicId].totalAmount += finalPrice;
                     groupedByClinic[clinicId].cartItemIds.push(item._id.toString());
                 }
                 const rawTotalRwf = Object.values(groupedByClinic).reduce((acc, group) => acc + group.totalAmount, 0);
@@ -334,18 +325,7 @@ class PaymentController {
                             isRead: false
                         }
                     ]);
-                    const admin = yield admin_model_1.default.findOne();
-                    if (admin) {
-                        yield admin_notification_model_1.default.create([
-                            {
-                                admin: admin._id,
-                                title: "New Order Placed",
-                                message: `Patient "${patient.fullName}" placed a new order (${orderId})`,
-                                type: "order",
-                                isRead: false
-                            }
-                        ]);
-                    }
+                    yield (0, utils_3.notifyAdmin)("New Order Placed", `Patient "${patient.fullName}" placed a new order (${orderId})`, "order");
                     createdOrderIds.push(orderId);
                 }
                 res
@@ -362,51 +342,20 @@ class PaymentController {
     }
     static handlePawaPayWebhook(req, res) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+            var _a, _b, _c, _d;
             try {
                 const data = req.body;
                 const transactionId = data === null || data === void 0 ? void 0 : data.depositId;
                 const status = ((data === null || data === void 0 ? void 0 : data.status) || "").toLowerCase();
-                const metadata = (_a = data === null || data === void 0 ? void 0 : data.metadata) !== null && _a !== void 0 ? _a : {};
+                const rawMetadata = (_a = data === null || data === void 0 ? void 0 : data.metadata) !== null && _a !== void 0 ? _a : {};
                 const failureReason = (_d = (_c = (_b = data === null || data === void 0 ? void 0 : data.failureReason) === null || _b === void 0 ? void 0 : _b.failureMessage) !== null && _c !== void 0 ? _c : data === null || data === void 0 ? void 0 : data.failureMessage) !== null && _d !== void 0 ? _d : "Unknown error";
-                const admin = yield admin_model_1.default.findOne();
                 if (!transactionId || !status) {
                     res.status(http_status_1.default.BAD_REQUEST).send("Missing data.");
                     return;
                 }
                 // Handle failed/rejected first
                 if (["failed", "rejected"].includes(status)) {
-                    console.error(`❌ PawaPay deposit failed: ${transactionId}, Reason: ${failureReason}`);
-                    const patientId = metadata.patientId;
-                    if (patientId) {
-                        yield patient_notification_model_1.default.create({
-                            patient: patientId,
-                            title: "Payment Failed",
-                            message: `Your payment could not be processed. Reason: ${failureReason}`,
-                            type: "payment",
-                            isRead: false
-                        });
-                        const patient = yield patient_model_1.default
-                            .findById(patientId)
-                            .select("fullName expoPushToken");
-                        if (patient === null || patient === void 0 ? void 0 : patient.expoPushToken) {
-                            yield (0, sendPushNotification_1.sendPushNotification)({
-                                expoPushToken: patient.expoPushToken,
-                                title: "Payment Failed",
-                                message: `Your payment could not be processed. Reason: ${failureReason}`,
-                                type: "payment"
-                            });
-                        }
-                        if (admin) {
-                            yield admin_notification_model_1.default.create({
-                                admin: admin._id,
-                                title: "PawaPay Payment Failed",
-                                message: `PawaPay payment failed for patient "${(patient === null || patient === void 0 ? void 0 : patient.fullName) || "Unknown"}". Reason: ${failureReason}`,
-                                type: "alert",
-                                isRead: false
-                            });
-                        }
-                    }
+                    yield (0, _1.handleFailedPayment)(failureReason, rawMetadata);
                     res.status(http_status_1.default.OK).send("Deposit marked as failed.");
                     return;
                 }
@@ -415,301 +364,28 @@ class PaymentController {
                     res.status(http_status_1.default.OK).send("Status not handled.");
                     return;
                 }
-                if ((metadata === null || metadata === void 0 ? void 0 : metadata.type) === "subscription") {
-                    const patientId = metadata.patientId;
-                    const planId = parseInt(metadata.subscriptionPlanId);
-                    const patient = yield patient_model_1.default.findById(patientId);
-                    if (!patient) {
-                        res.status(http_status_1.default.NOT_FOUND).send("Patient not found.");
-                        return;
-                    }
-                    const plan = subscription_plans_1.SUBSCRIPTION_PLANS.find((p) => p.id === planId);
-                    if (!plan) {
-                        res.status(http_status_1.default.BAD_REQUEST).send("Invalid subscription plan.");
-                        return;
-                    }
-                    const existingSubscription = yield subscription_model_1.default.findOne({
-                        patient: patientId,
-                        status: "active"
-                    });
-                    const durationNumber = parseInt(((_e = plan.duration.match(/\d+/)) === null || _e === void 0 ? void 0 : _e[0]) || "1");
-                    if (existingSubscription) {
-                        existingSubscription.endDate = (0, date_fns_1.addMonths)(existingSubscription.endDate, durationNumber);
-                        if (plan.privilege) {
-                            existingSubscription.privilege += plan.privilege;
-                            existingSubscription.initialPrivilege += plan.privilege;
-                        }
-                        yield existingSubscription.save();
-                    }
-                    else {
-                        const startDate = new Date();
-                        const endDate = (0, date_fns_1.addMonths)(startDate, durationNumber);
-                        yield subscription_model_1.default.create({
-                            patient: patientId,
-                            planName: plan.name.toLowerCase(),
-                            price: plan.price,
-                            duration: plan.duration,
-                            includedTests: plan.includedTests,
-                            privilege: (_f = plan.privilege) !== null && _f !== void 0 ? _f : 0,
-                            initialPrivilege: (_g = plan.privilege) !== null && _g !== void 0 ? _g : 0,
-                            startDate,
-                            endDate,
-                            status: "active",
-                            isPaid: true,
-                            remainingTests: 2,
-                            testsUsedThisMonth: 0,
-                            lastTestDates: []
-                        });
-                    }
-                    yield patient_notification_model_1.default.create({
-                        patient: patientId,
-                        title: "Subscription Activated",
-                        message: `Your ${plan.name} plan is now active! It will be usable in 72 hours.`,
-                        type: "subscription",
-                        isRead: false
-                    });
-                    if (patient.expoPushToken) {
-                        yield (0, sendPushNotification_1.sendPushNotification)({
-                            expoPushToken: patient.expoPushToken,
-                            title: "Subscription Activated",
-                            message: `Your ${plan.name} plan is now active! You can use it in 72 hours.`,
-                            type: "subscription"
-                        });
-                    }
-                    if (admin) {
-                        yield admin_notification_model_1.default.create({
-                            admin: admin._id,
-                            title: "New Subscription Activated",
-                            message: `Patient "${patient.fullName}" subscribed to the "${plan.name}" plan for ${plan.price} RWF.`,
-                            type: "subscription",
-                            isRead: false
-                        });
-                    }
-                    res.status(http_status_1.default.OK).send("Subscription created/extended.");
+                const existingOrder = yield order_model_1.default.findOne({
+                    depositId: transactionId
+                });
+                if (existingOrder) {
+                    res.status(http_status_1.default.OK).send("Order already processed.");
                     return;
                 }
-                const patientId = metadata.patientId;
-                const deliveryMethod = (0, utils_2.deliveryMethodToNumber)(metadata.deliveryMethod);
-                const cartIdRaw = metadata.cartId;
-                const patient = yield patient_model_1.default.findById(patientId);
-                if (!patient) {
-                    res.status(http_status_1.default.NOT_FOUND).send("Patient not found.");
+                const metadata = Array.isArray(rawMetadata)
+                    ? Object.fromEntries(rawMetadata.map((m) => [m.fieldName, m.fieldValue]))
+                    : rawMetadata;
+                if ((metadata === null || metadata === void 0 ? void 0 : metadata.paymentOrigin) === "public") {
+                    yield (0, _1.handlePublicPayment)(data, metadata);
+                    res.status(http_status_1.default.OK).send("Public order created successfully.");
                     return;
                 }
-                let cartIds = [];
-                if (cartIdRaw) {
-                    try {
-                        cartIds = JSON.parse(cartIdRaw);
-                        if (!Array.isArray(cartIds))
-                            cartIds = [cartIdRaw];
-                    }
-                    catch (_r) {
-                        cartIds = [cartIdRaw];
-                    }
-                }
-                const query = { patient: patientId, status: "pending" };
-                if (cartIds.length > 0) {
-                    query._id = {
-                        $in: cartIds.map((id) => new mongoose_1.default.Types.ObjectId(id))
-                    };
-                }
-                const cartItems = yield testBooking_model_1.default.find(query);
-                if (!(cartItems === null || cartItems === void 0 ? void 0 : cartItems.length)) {
-                    res.status(http_status_1.default.NOT_FOUND).send("No cart items found.");
-                    return;
-                }
-                const allTestItem = yield test_item_model_1.default.find().select("name image");
-                const testIds = cartItems.map((item) => item.test);
-                const testDocs = yield test_model_1.default
-                    .find({ _id: { $in: testIds } })
-                    .select("testName price turnaroundTime description");
-                const testMap = new Map(testDocs.map((test) => [
-                    test._id.toString(),
-                    {
-                        testName: test.testName,
-                        price: test.price,
-                        turnaroundTime: test.turnaroundTime,
-                        description: test.description
-                    }
-                ]));
-                const groupedByClinic = {};
-                for (const item of cartItems) {
-                    const clinicId = item.clinic.toString();
-                    const testData = testMap.get(item.test.toString());
-                    const testImage = ((_h = allTestItem.find((img) => img.name.toLowerCase() === (testData === null || testData === void 0 ? void 0 : testData.testName.toLowerCase()))) === null || _h === void 0 ? void 0 : _h.image) || "";
-                    const basePrice = (_j = testData === null || testData === void 0 ? void 0 : testData.price) !== null && _j !== void 0 ? _j : 0;
-                    const subtotal = basePrice * item.individuals;
-                    const finalPrice = ((_k = item.discount) === null || _k === void 0 ? void 0 : _k.finalPrice) && item.discount.finalPrice > 0
-                        ? item.discount.finalPrice
-                        : subtotal;
-                    const preparedTest = {
-                        test: item.test,
-                        testName: (_l = testData === null || testData === void 0 ? void 0 : testData.testName) !== null && _l !== void 0 ? _l : "Unknown Test",
-                        individuals: item.individuals,
-                        price: basePrice,
-                        turnaroundTime: (_m = testData === null || testData === void 0 ? void 0 : testData.turnaroundTime) !== null && _m !== void 0 ? _m : "N/A",
-                        description: (_o = testData === null || testData === void 0 ? void 0 : testData.description) !== null && _o !== void 0 ? _o : "N/A",
-                        testImage,
-                        date: item.date,
-                        time: item.time,
-                        scheduledAt: item.scheduledAt,
-                        status: "pending",
-                        statusHistory: [
-                            {
-                                status: "pending",
-                                changedAt: new Date()
-                            }
-                        ]
-                    };
-                    if (!groupedByClinic[clinicId]) {
-                        groupedByClinic[clinicId] = {
-                            tests: [],
-                            totalAmount: 0,
-                            cartItemIds: []
-                        };
-                    }
-                    groupedByClinic[clinicId].tests.push(preparedTest);
-                    groupedByClinic[clinicId].totalAmount += finalPrice;
-                    groupedByClinic[clinicId].cartItemIds.push(item._id.toString());
-                }
-                const fullTotalAmount = Object.values(groupedByClinic).reduce((sum, g) => sum + g.totalAmount, 0);
-                const expectedAmount = Math.round(fullTotalAmount);
-                const receivedAmount = Math.round(parseFloat((data === null || data === void 0 ? void 0 : data.depositedAmount) || "0"));
-                if (expectedAmount !== receivedAmount) {
-                    console.error("❌ Amount mismatch:", {
-                        expected: expectedAmount,
-                        received: receivedAmount
-                    });
-                    if (admin) {
-                        yield admin_notification_model_1.default.create({
-                            admin: admin._id,
-                            title: "Payment Amount Mismatch",
-                            message: `PawaPay webhook mismatch for patient "${patient.fullName}". Expected: ${expectedAmount}, Received: ${receivedAmount}.`,
-                            type: "alert",
-                            isRead: false
-                        });
-                    }
-                    res
-                        .status(http_status_1.default.BAD_REQUEST)
-                        .send(`Amount mismatch. Expected ${expectedAmount}, got ${receivedAmount}`);
-                    return;
-                }
-                const finalDeliveryAddress = {
-                    fullName: patient.fullName,
-                    phoneNo: patient.phoneNumber,
-                    address: ((_p = patient.location) === null || _p === void 0 ? void 0 : _p.street) || "",
-                    cityOrDistrict: ((_q = patient.location) === null || _q === void 0 ? void 0 : _q.cityOrDistrict) || ""
-                };
-                const createdOrderIds = [];
-                for (const [clinicId, group] of Object.entries(groupedByClinic)) {
-                    const orderId = (0, utils_1.generateOrderID)();
-                    const clinic = yield clinic_model_1.default
-                        .findById(clinicId)
-                        .select("clinicName currencySymbol");
-                    if (!clinic)
-                        continue;
-                    const order = yield order_model_1.default.create({
-                        patient: patientId,
-                        clinic: clinicId,
-                        orderId,
-                        tests: group.tests,
-                        paymentMethod: "pawa_pay",
-                        deliveryMethod,
-                        deliveryAddress: finalDeliveryAddress,
-                        totalAmount: group.totalAmount,
-                        paymentStatus: "paid",
-                        pawaPayInfo: {
-                            depositId: transactionId,
-                            status: "complete"
-                        }
-                    });
-                    yield testBooking_model_1.default.updateMany({ _id: { $in: group.cartItemIds } }, { status: "booked" });
-                    const clinicEarning = Math.round(group.totalAmount * 0.96);
-                    yield clinic_model_1.default.findByIdAndUpdate(clinicId, {
-                        $inc: { balance: clinicEarning }
-                    });
-                    const populatedOrder = yield order_model_1.default
-                        .findById(order._id)
-                        .populate("clinic")
-                        .populate("patient")
-                        .lean();
-                    yield smtp_order_service_1.default.sendOrderConfirmationEmail(populatedOrder);
-                    yield smtp_order_service_1.default.sendClinicOrderNotificationEmail(populatedOrder);
-                    yield patient_notification_model_1.default.create([
-                        {
-                            patient: patientId,
-                            title: "Order Confirmed",
-                            message: `Your order #${orderId} has been received`,
-                            type: "order",
-                            isRead: false
-                        },
-                        {
-                            patient: patientId,
-                            title: "Payment Received",
-                            message: `We've received your payment of ${group.totalAmount.toLocaleString()} RWF`,
-                            type: "payment",
-                            isRead: false
-                        }
-                    ]);
-                    if (patient.expoPushToken) {
-                        yield (0, sendPushNotification_1.sendPushNotification)({
-                            expoPushToken: patient.expoPushToken,
-                            title: "Payment Successful",
-                            message: `Your payment for order #${orderId} was received`,
-                            type: "payment"
-                        });
-                        yield (0, sendPushNotification_1.sendPushNotification)({
-                            expoPushToken: patient.expoPushToken,
-                            title: "Order Received",
-                            message: `Your order #${orderId} has been received.`,
-                            type: "order"
-                        });
-                    }
-                    yield clinic_notification_model_1.default.create([
-                        {
-                            clinic: clinicId,
-                            title: "New Order Received",
-                            message: `New order #${orderId} from ${patient.fullName}`,
-                            type: "order",
-                            isRead: false
-                        },
-                        {
-                            clinic: clinicId,
-                            title: "Payment Processed",
-                            message: `Payment received for order #${orderId} (${group.totalAmount.toLocaleString()} RWF)`,
-                            type: "wallet",
-                            isRead: false
-                        }
-                    ]);
-                    if (admin) {
-                        yield admin_notification_model_1.default.create([
-                            {
-                                admin: admin._id,
-                                title: "New Order Placed",
-                                message: `Patient "${patient.fullName}" placed a new order (${orderId})`,
-                                type: "order",
-                                isRead: false
-                            }
-                        ]);
-                    }
-                    createdOrderIds.push(orderId);
-                }
+                const createdOrderIds = yield (0, _1.handlePatientPayment)(data, metadata);
                 res
                     .status(http_status_1.default.OK)
                     .send(`Created ${createdOrderIds.length} order(s) from PawaPay.`);
             }
             catch (error) {
-                console.error("❌ PawaPay Webhook Error:", error);
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create({
-                        admin: admin._id,
-                        title: "PawaPay Webhook Error",
-                        message: `Error occurred while processing PawaPay webhook: ${error.message}`,
-                        type: "warning",
-                        isRead: false
-                    });
-                }
+                yield (0, utils_3.notifyAdmin)("PawaPay Webhook Error", `Error occurred while processing PawaPay webhook: ${error.message}`, "warning");
                 res.status(500).send("Internal server error.");
             }
         });
@@ -738,7 +414,6 @@ class PaymentController {
                 const clinicName = (_b = withdrawal.clinic) === null || _b === void 0 ? void 0 : _b.clinicName;
                 const phone = withdrawal.phoneNumber;
                 const amount = withdrawal.amount;
-                const admin = yield admin_model_1.default.findOne();
                 switch (normalizedStatus) {
                     case "COMPLETED": {
                         withdrawal.status = "completed";
@@ -758,17 +433,7 @@ class PaymentController {
                                 isRead: false
                             }
                         ]);
-                        if (admin) {
-                            yield admin_notification_model_1.default.create([
-                                {
-                                    admin: admin._id,
-                                    title: "Clinic Withdrawal Completed",
-                                    message: `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} completed.`,
-                                    type: "wallet",
-                                    isRead: false
-                                }
-                            ]);
-                        }
+                        yield (0, utils_3.notifyAdmin)("Clinic Withdrawal Completed", `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} completed.`, "wallet");
                         break;
                     }
                     case "FAILED":
@@ -792,17 +457,7 @@ class PaymentController {
                                 isRead: false
                             }
                         ]);
-                        if (admin) {
-                            yield admin_notification_model_1.default.create([
-                                {
-                                    admin: admin._id,
-                                    title: "Clinic Withdrawal Failed",
-                                    message: `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} failed. Reason: ${withdrawal.rejectionReason}`,
-                                    type: "wallet",
-                                    isRead: false
-                                }
-                            ]);
-                        }
+                        yield (0, utils_3.notifyAdmin)("Clinic Withdrawal Failed", `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} failed. Reason: ${withdrawal.rejectionReason}`, "wallet");
                         break;
                     }
                     default:
@@ -866,7 +521,6 @@ class PaymentController {
                 const clinicName = (_b = withdrawal.clinic) === null || _b === void 0 ? void 0 : _b.clinicName;
                 const account = withdrawal.accountNumber;
                 const amount = withdrawal.amount;
-                const admin = yield admin_model_1.default.findOne();
                 // Early state logging
                 if (["created", "processing"].includes(normalizedStatus)) {
                     yield withdrawal_model_1.default.updateOne({ _id: withdrawal._id }, {
@@ -904,17 +558,7 @@ class PaymentController {
                             isRead: false
                         }
                     ]);
-                    if (admin) {
-                        yield admin_notification_model_1.default.create([
-                            {
-                                admin: admin._id,
-                                title: "Clinic Withdrawal Completed",
-                                message: `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${account} completed.`,
-                                type: "wallet",
-                                isRead: false
-                            }
-                        ]);
-                    }
+                    yield (0, utils_3.notifyAdmin)("Clinic Withdrawal Completed", `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${account} completed.`, "wallet");
                     return res.status(http_status_1.default.OK).send("Withdrawal marked as completed.");
                 }
                 // Failed
@@ -944,17 +588,7 @@ class PaymentController {
                             isRead: false
                         }
                     ]);
-                    if (admin) {
-                        yield admin_notification_model_1.default.create([
-                            {
-                                admin: admin._id,
-                                title: "Clinic Withdrawal Failed",
-                                message: `Clinic ${clinicName} withdrawal of ${withdrawal.amount.toLocaleString()} RWF to ${account} failed. Reason: ${errorCode || "Unknown error"}`,
-                                type: "wallet",
-                                isRead: false
-                            }
-                        ]);
-                    }
+                    yield (0, utils_3.notifyAdmin)("Clinic Withdrawal Failed", `Clinic ${clinicName} withdrawal of ${withdrawal.amount.toLocaleString()} RWF to ${account} failed. Reason: ${errorCode || "Unknown error"}`, "wallet");
                     return res.status(http_status_1.default.OK).send("Withdrawal marked as failed.");
                 }
                 yield withdrawal_model_1.default.updateOne({ _id: withdrawal._id }, {

@@ -103,12 +103,6 @@ testRouter.post(
   asyncHandler(TestController.bulkUploadTests)
 )
 
-testRouter.delete(
-  "/clear-tests",
-  ClinicMiddleware.authenticate,
-  asyncHandler(TestController.clearAllTests)
-)
-
 testRouter.get(
   "/clinics/similar-test/:testId",
   PatientMiddleware.authenticate,

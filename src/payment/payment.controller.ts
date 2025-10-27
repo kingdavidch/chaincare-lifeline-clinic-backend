@@ -3,9 +3,6 @@ import axios from "axios"
 import "dotenv/config"
 import { NextFunction, Request, Response } from "express"
 import httpStatus from "http-status"
-import mongoose from "mongoose"
-import adminModel from "../admin/admin.model"
-import adminNotificationModel from "../admin/admin.notification.model"
 import clinicModel from "../clinic/clinic.model"
 import clinicNotificationModel from "../clinic/clinic.notification.model"
 import orderModel from "../order/order.model"
@@ -25,11 +22,14 @@ import {
   YellowCardWebhookPayload
 } from "./payment.types"
 import withdrawalModel from "./withdrawal.model"
-import subscriptionModel from "../subscription/subscription.model"
-import { SUBSCRIPTION_PLANS } from "../constant/subscription.plans"
-import { addMonths } from "date-fns"
 import { IClinic } from "../clinic/clinic.types"
 import { deliveryMethodToNumber } from "../order/utils"
+import { notifyAdmin } from "../admin/utils"
+import {
+  handleFailedPayment,
+  handlePatientPayment,
+  handlePublicPayment
+} from "."
 
 export default class PaymentController {
   public static async getChannels(
@@ -160,16 +160,11 @@ export default class PaymentController {
             isRead: false
           })
 
-          const admin = await adminModel.findOne()
-          if (admin) {
-            await adminNotificationModel.create({
-              admin: admin._id,
-              title: "Payment Failed",
-              message: `Order #${order.orderId} (YellowCard) failed: ${failureReason}`,
-              type: "payment",
-              isRead: false
-            })
-          }
+          await notifyAdmin(
+            "Payment Failed",
+            `Order #${order.orderId} (YellowCard) failed: ${failureReason}`,
+            "payment"
+          )
         }
 
         res.status(httpStatus.OK).send(`Failure processed: ${failureReason}`)
@@ -252,15 +247,22 @@ export default class PaymentController {
             (img) => img.name.toLowerCase() === testData?.testName.toLowerCase()
           )?.image || ""
 
+        const subtotal = testData?.price ?? 0
+        const finalPrice =
+          item.discount?.finalPrice && item.discount.finalPrice > 0
+            ? item.discount.finalPrice
+            : subtotal
+
         const preparedTest = {
           test: item.test,
           testName: testData?.testName ?? "Unknown Test",
-          individuals: item.individuals,
-          price: testData?.price ?? 0,
+          price: subtotal,
           turnaroundTime: testData?.turnaroundTime ?? "N/A",
           description: testData?.description ?? "N/A",
           testImage,
           date: item.date,
+          time: item.time,
+          scheduledAt: item.scheduledAt,
           status: "pending",
           statusHistory: [{ status: "pending", changedAt: new Date() }]
         }
@@ -274,8 +276,7 @@ export default class PaymentController {
         }
 
         groupedByClinic[clinicId].tests.push(preparedTest)
-        groupedByClinic[clinicId].totalAmount +=
-          preparedTest.price * item.individuals
+        groupedByClinic[clinicId].totalAmount += finalPrice
         groupedByClinic[clinicId].cartItemIds.push(item._id.toString())
       }
 
@@ -412,18 +413,11 @@ export default class PaymentController {
           }
         ])
 
-        const admin = await adminModel.findOne()
-        if (admin) {
-          await adminNotificationModel.create([
-            {
-              admin: admin._id,
-              title: "New Order Placed",
-              message: `Patient "${patient.fullName}" placed a new order (${orderId})`,
-              type: "order",
-              isRead: false
-            }
-          ])
-        }
+        await notifyAdmin(
+          "New Order Placed",
+          `Patient "${patient.fullName}" placed a new order (${orderId})`,
+          "order"
+        )
 
         createdOrderIds.push(orderId)
       }
@@ -447,13 +441,11 @@ export default class PaymentController {
       const data = req.body
       const transactionId = data?.depositId
       const status = (data?.status || "").toLowerCase()
-      const metadata = data?.metadata ?? {}
+      const rawMetadata = data?.metadata ?? {}
       const failureReason =
         data?.failureReason?.failureMessage ??
         data?.failureMessage ??
         "Unknown error"
-
-      const admin = await adminModel.findOne()
 
       if (!transactionId || !status) {
         res.status(httpStatus.BAD_REQUEST).send("Missing data.")
@@ -462,43 +454,7 @@ export default class PaymentController {
 
       // Handle failed/rejected first
       if (["failed", "rejected"].includes(status)) {
-        console.error(
-          `❌ PawaPay deposit failed: ${transactionId}, Reason: ${failureReason}`
-        )
-
-        const patientId = metadata.patientId
-        if (patientId) {
-          await patientNotificationModel.create({
-            patient: patientId,
-            title: "Payment Failed",
-            message: `Your payment could not be processed. Reason: ${failureReason}`,
-            type: "payment",
-            isRead: false
-          })
-
-          const patient = await patientModel
-            .findById(patientId)
-            .select("fullName expoPushToken")
-          if (patient?.expoPushToken) {
-            await sendPushNotification({
-              expoPushToken: patient.expoPushToken,
-              title: "Payment Failed",
-              message: `Your payment could not be processed. Reason: ${failureReason}`,
-              type: "payment"
-            })
-          }
-
-          if (admin) {
-            await adminNotificationModel.create({
-              admin: admin._id,
-              title: "PawaPay Payment Failed",
-              message: `PawaPay payment failed for patient "${patient?.fullName || "Unknown"}". Reason: ${failureReason}`,
-              type: "alert",
-              isRead: false
-            })
-          }
-        }
-
+        await handleFailedPayment(failureReason, rawMetadata)
         res.status(httpStatus.OK).send("Deposit marked as failed.")
         return
       }
@@ -509,370 +465,36 @@ export default class PaymentController {
         return
       }
 
-      if (metadata?.type === "subscription") {
-        const patientId = metadata.patientId
-        const planId = parseInt(metadata.subscriptionPlanId)
+      const existingOrder = await orderModel.findOne({
+        depositId: transactionId
+      })
+      if (existingOrder) {
+        res.status(httpStatus.OK).send("Order already processed.")
+        return
+      }
 
-        const patient = await patientModel.findById(patientId)
-        if (!patient) {
-          res.status(httpStatus.NOT_FOUND).send("Patient not found.")
-          return
-        }
-
-        const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId)
-        if (!plan) {
-          res.status(httpStatus.BAD_REQUEST).send("Invalid subscription plan.")
-          return
-        }
-
-        const existingSubscription = await subscriptionModel.findOne({
-          patient: patientId,
-          status: "active"
-        })
-
-        const durationNumber = parseInt(plan.duration.match(/\d+/)?.[0] || "1")
-
-        if (existingSubscription) {
-          existingSubscription.endDate = addMonths(
-            existingSubscription.endDate,
-            durationNumber
+      const metadata = Array.isArray(rawMetadata)
+        ? Object.fromEntries(
+            rawMetadata.map((m: any) => [m.fieldName, m.fieldValue])
           )
+        : rawMetadata
 
-          if (plan.privilege) {
-            existingSubscription.privilege += plan.privilege
-            existingSubscription.initialPrivilege += plan.privilege
-          }
-
-          await existingSubscription.save()
-        } else {
-          const startDate = new Date()
-          const endDate = addMonths(startDate, durationNumber)
-
-          await subscriptionModel.create({
-            patient: patientId,
-            planName: plan.name.toLowerCase(),
-            price: plan.price,
-            duration: plan.duration,
-            includedTests: plan.includedTests,
-            privilege: plan.privilege ?? 0,
-            initialPrivilege: plan.privilege ?? 0,
-            startDate,
-            endDate,
-            status: "active",
-            isPaid: true,
-            remainingTests: 2,
-            testsUsedThisMonth: 0,
-            lastTestDates: []
-          })
-        }
-
-        await patientNotificationModel.create({
-          patient: patientId,
-          title: "Subscription Activated",
-          message: `Your ${plan.name} plan is now active! It will be usable in 72 hours.`,
-          type: "subscription",
-          isRead: false
-        })
-
-        if (patient.expoPushToken) {
-          await sendPushNotification({
-            expoPushToken: patient.expoPushToken,
-            title: "Subscription Activated",
-            message: `Your ${plan.name} plan is now active! You can use it in 72 hours.`,
-            type: "subscription"
-          })
-        }
-
-        if (admin) {
-          await adminNotificationModel.create({
-            admin: admin._id,
-            title: "New Subscription Activated",
-            message: `Patient "${patient.fullName}" subscribed to the "${plan.name}" plan for ${plan.price} RWF.`,
-            type: "subscription",
-            isRead: false
-          })
-        }
-
-        res.status(httpStatus.OK).send("Subscription created/extended.")
+      if (metadata?.paymentOrigin === "public") {
+        await handlePublicPayment(data, metadata)
+        res.status(httpStatus.OK).send("Public order created successfully.")
         return
       }
 
-      const patientId = metadata.patientId
-      const deliveryMethod = deliveryMethodToNumber(metadata.deliveryMethod)
-      const cartIdRaw = metadata.cartId
-
-      const patient = await patientModel.findById(patientId)
-      if (!patient) {
-        res.status(httpStatus.NOT_FOUND).send("Patient not found.")
-        return
-      }
-
-      let cartIds: string[] = []
-      if (cartIdRaw) {
-        try {
-          cartIds = JSON.parse(cartIdRaw)
-          if (!Array.isArray(cartIds)) cartIds = [cartIdRaw]
-        } catch {
-          cartIds = [cartIdRaw]
-        }
-      }
-
-      const query: any = { patient: patientId, status: "pending" }
-      if (cartIds.length > 0) {
-        query._id = {
-          $in: cartIds.map((id) => new mongoose.Types.ObjectId(id))
-        }
-      }
-
-      const cartItems = await testBookingModel.find(query)
-      if (!cartItems?.length) {
-        res.status(httpStatus.NOT_FOUND).send("No cart items found.")
-        return
-      }
-
-      const allTestItem = await testItemModel.find().select("name image")
-      const testIds = cartItems.map((item) => item.test)
-      const testDocs = await testModel
-        .find({ _id: { $in: testIds } })
-        .select("testName price turnaroundTime description")
-
-      const testMap = new Map(
-        testDocs.map((test) => [
-          test._id.toString(),
-          {
-            testName: test.testName,
-            price: test.price,
-            turnaroundTime: test.turnaroundTime,
-            description: test.description
-          }
-        ])
-      )
-
-      const groupedByClinic: Record<
-        string,
-        {
-          tests: any[]
-          totalAmount: number
-          cartItemIds: string[]
-        }
-      > = {}
-
-      for (const item of cartItems) {
-        const clinicId = item.clinic.toString()
-        const testData = testMap.get(item.test.toString())
-        const testImage =
-          allTestItem.find(
-            (img) => img.name.toLowerCase() === testData?.testName.toLowerCase()
-          )?.image || ""
-
-        const basePrice = testData?.price ?? 0
-        const subtotal = basePrice * item.individuals
-
-        const finalPrice =
-          item.discount?.finalPrice && item.discount.finalPrice > 0
-            ? item.discount.finalPrice
-            : subtotal
-
-        const preparedTest = {
-          test: item.test,
-          testName: testData?.testName ?? "Unknown Test",
-          individuals: item.individuals,
-          price: basePrice,
-          turnaroundTime: testData?.turnaroundTime ?? "N/A",
-          description: testData?.description ?? "N/A",
-          testImage,
-          date: item.date,
-          time: item.time,
-          scheduledAt: item.scheduledAt,
-          status: "pending",
-          statusHistory: [
-            {
-              status: "pending",
-              changedAt: new Date()
-            }
-          ]
-        }
-
-        if (!groupedByClinic[clinicId]) {
-          groupedByClinic[clinicId] = {
-            tests: [],
-            totalAmount: 0,
-            cartItemIds: []
-          }
-        }
-
-        groupedByClinic[clinicId].tests.push(preparedTest)
-        groupedByClinic[clinicId].totalAmount += finalPrice
-        groupedByClinic[clinicId].cartItemIds.push(item._id.toString())
-      }
-
-      const fullTotalAmount = Object.values(groupedByClinic).reduce(
-        (sum, g) => sum + g.totalAmount,
-        0
-      )
-
-      const expectedAmount = Math.round(fullTotalAmount)
-      const receivedAmount = Math.round(
-        parseFloat(data?.depositedAmount || "0")
-      )
-
-      if (expectedAmount !== receivedAmount) {
-        console.error("❌ Amount mismatch:", {
-          expected: expectedAmount,
-          received: receivedAmount
-        })
-
-        if (admin) {
-          await adminNotificationModel.create({
-            admin: admin._id,
-            title: "Payment Amount Mismatch",
-            message: `PawaPay webhook mismatch for patient "${patient.fullName}". Expected: ${expectedAmount}, Received: ${receivedAmount}.`,
-            type: "alert",
-            isRead: false
-          })
-        }
-
-        res
-          .status(httpStatus.BAD_REQUEST)
-          .send(
-            `Amount mismatch. Expected ${expectedAmount}, got ${receivedAmount}`
-          )
-        return
-      }
-
-      const finalDeliveryAddress = {
-        fullName: patient.fullName,
-        phoneNo: patient.phoneNumber,
-        address: patient.location?.street || "",
-        cityOrDistrict: patient.location?.cityOrDistrict || ""
-      }
-
-      const createdOrderIds: string[] = []
-
-      for (const [clinicId, group] of Object.entries(groupedByClinic)) {
-        const orderId = generateOrderID()
-
-        const clinic = await clinicModel
-          .findById(clinicId)
-          .select("clinicName currencySymbol")
-        if (!clinic) continue
-
-        const order = await orderModel.create({
-          patient: patientId,
-          clinic: clinicId,
-          orderId,
-          tests: group.tests,
-          paymentMethod: "pawa_pay",
-          deliveryMethod,
-          deliveryAddress: finalDeliveryAddress,
-          totalAmount: group.totalAmount,
-          paymentStatus: "paid",
-          pawaPayInfo: {
-            depositId: transactionId,
-            status: "complete"
-          }
-        })
-
-        await testBookingModel.updateMany(
-          { _id: { $in: group.cartItemIds } },
-          { status: "booked" }
-        )
-
-        const clinicEarning = Math.round(group.totalAmount * 0.96)
-        await clinicModel.findByIdAndUpdate(clinicId, {
-          $inc: { balance: clinicEarning }
-        })
-
-        const populatedOrder = await orderModel
-          .findById(order._id)
-          .populate("clinic")
-          .populate("patient")
-          .lean<IOrder>()
-
-        await OrderSmtpService.sendOrderConfirmationEmail(populatedOrder!)
-        await OrderSmtpService.sendClinicOrderNotificationEmail(populatedOrder!)
-
-        await patientNotificationModel.create([
-          {
-            patient: patientId,
-            title: "Order Confirmed",
-            message: `Your order #${orderId} has been received`,
-            type: "order",
-            isRead: false
-          },
-          {
-            patient: patientId,
-            title: "Payment Received",
-            message: `We've received your payment of ${group.totalAmount.toLocaleString()} RWF`,
-            type: "payment",
-            isRead: false
-          }
-        ])
-
-        if (patient.expoPushToken) {
-          await sendPushNotification({
-            expoPushToken: patient.expoPushToken,
-            title: "Payment Successful",
-            message: `Your payment for order #${orderId} was received`,
-            type: "payment"
-          })
-          await sendPushNotification({
-            expoPushToken: patient.expoPushToken,
-            title: "Order Received",
-            message: `Your order #${orderId} has been received.`,
-            type: "order"
-          })
-        }
-
-        await clinicNotificationModel.create([
-          {
-            clinic: clinicId,
-            title: "New Order Received",
-            message: `New order #${orderId} from ${patient.fullName}`,
-            type: "order",
-            isRead: false
-          },
-          {
-            clinic: clinicId,
-            title: "Payment Processed",
-            message: `Payment received for order #${orderId} (${group.totalAmount.toLocaleString()} RWF)`,
-            type: "wallet",
-            isRead: false
-          }
-        ])
-
-        if (admin) {
-          await adminNotificationModel.create([
-            {
-              admin: admin._id,
-              title: "New Order Placed",
-              message: `Patient "${patient.fullName}" placed a new order (${orderId})`,
-              type: "order",
-              isRead: false
-            }
-          ])
-        }
-
-        createdOrderIds.push(orderId)
-      }
-
+      const createdOrderIds = await handlePatientPayment(data, metadata)
       res
         .status(httpStatus.OK)
         .send(`Created ${createdOrderIds.length} order(s) from PawaPay.`)
     } catch (error: any) {
-      console.error("❌ PawaPay Webhook Error:", error)
-
-      const admin = await adminModel.findOne()
-      if (admin) {
-        await adminNotificationModel.create({
-          admin: admin._id,
-          title: "PawaPay Webhook Error",
-          message: `Error occurred while processing PawaPay webhook: ${error.message}`,
-          type: "warning",
-          isRead: false
-        })
-      }
-
+      await notifyAdmin(
+        "PawaPay Webhook Error",
+        `Error occurred while processing PawaPay webhook: ${error.message}`,
+        "warning"
+      )
       res.status(500).send("Internal server error.")
     }
   }
@@ -910,7 +532,6 @@ export default class PaymentController {
       const clinicName = withdrawal.clinic?.clinicName
       const phone = withdrawal.phoneNumber
       const amount = withdrawal.amount
-      const admin = await adminModel.findOne()
 
       switch (normalizedStatus) {
         case "COMPLETED": {
@@ -933,17 +554,12 @@ export default class PaymentController {
             }
           ])
 
-          if (admin) {
-            await adminNotificationModel.create([
-              {
-                admin: admin._id,
-                title: "Clinic Withdrawal Completed",
-                message: `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} completed.`,
-                type: "wallet",
-                isRead: false
-              }
-            ])
-          }
+          await notifyAdmin(
+            "Clinic Withdrawal Completed",
+            `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} completed.`,
+            "wallet"
+          )
+
           break
         }
 
@@ -971,17 +587,12 @@ export default class PaymentController {
             }
           ])
 
-          if (admin) {
-            await adminNotificationModel.create([
-              {
-                admin: admin._id,
-                title: "Clinic Withdrawal Failed",
-                message: `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} failed. Reason: ${withdrawal.rejectionReason}`,
-                type: "wallet",
-                isRead: false
-              }
-            ])
-          }
+          await notifyAdmin(
+            "Clinic Withdrawal Failed",
+            `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${phone} failed. Reason: ${withdrawal.rejectionReason}`,
+            "wallet"
+          )
+
           break
         }
 
@@ -1061,7 +672,6 @@ export default class PaymentController {
       const clinicName = withdrawal.clinic?.clinicName
       const account = withdrawal.accountNumber
       const amount = withdrawal.amount
-      const admin = await adminModel.findOne()
 
       // Early state logging
       if (["created", "processing"].includes(normalizedStatus)) {
@@ -1112,17 +722,11 @@ export default class PaymentController {
           }
         ])
 
-        if (admin) {
-          await adminNotificationModel.create([
-            {
-              admin: admin._id,
-              title: "Clinic Withdrawal Completed",
-              message: `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${account} completed.`,
-              type: "wallet",
-              isRead: false
-            }
-          ])
-        }
+        await notifyAdmin(
+          "Clinic Withdrawal Completed",
+          `Clinic ${clinicName} withdrawal of ${amount.toLocaleString()} RWF to ${account} completed.`,
+          "wallet"
+        )
 
         return res.status(httpStatus.OK).send("Withdrawal marked as completed.")
       }
@@ -1161,17 +765,11 @@ export default class PaymentController {
           }
         ])
 
-        if (admin) {
-          await adminNotificationModel.create([
-            {
-              admin: admin._id,
-              title: "Clinic Withdrawal Failed",
-              message: `Clinic ${clinicName} withdrawal of ${withdrawal.amount.toLocaleString()} RWF to ${account} failed. Reason: ${errorCode || "Unknown error"}`,
-              type: "wallet",
-              isRead: false
-            }
-          ])
-        }
+        await notifyAdmin(
+          "Clinic Withdrawal Failed",
+          `Clinic ${clinicName} withdrawal of ${withdrawal.amount.toLocaleString()} RWF to ${account} failed. Reason: ${errorCode || "Unknown error"}`,
+          "wallet"
+        )
 
         return res.status(httpStatus.OK).send("Withdrawal marked as failed.")
       }

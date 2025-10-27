@@ -13,7 +13,19 @@ export const handleRequiredFields = (
   req: Request,
   requiredFields: string[]
 ) => {
-  const missingFields = requiredFields.filter((field) => !(field in req.body))
+  const missingFields = requiredFields.filter((field) => {
+    const keys = field.split(".")
+    let value: any = req.body
+    for (const key of keys) {
+      if (value && key in value) {
+        value = value[key]
+      } else {
+        return true
+      }
+    }
+    return false
+  })
+
   if (missingFields.length > 0) {
     throw new appError(
       httpStatus.BAD_REQUEST,
@@ -164,4 +176,26 @@ export const formatDOB = (dob: Date | string) => {
 export const formatPhone = (phone: string) => {
   // Convert 07xxxxxxxx to +2507xxxxxxxx
   return phone.startsWith("+") ? phone : `+250${phone.replace(/^0/, "")}`
+}
+
+export const formatCase = (str: string) =>
+  str?.replace(/\b\w/g, (c) => c.toUpperCase())
+
+export function formatAddress(location?: {
+  street?: string
+  cityOrDistrict?: string
+  stateOrProvince?: string
+  postalCode?: string
+}): string {
+  if (!location) return "Unknown Address"
+
+  return [
+    location.street,
+    location.cityOrDistrict,
+    location.stateOrProvince,
+    location.postalCode
+  ]
+    .filter(Boolean)
+    .map((part) => part?.toString().trim())
+    .join(", ")
 }

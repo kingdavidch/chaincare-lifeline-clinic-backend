@@ -66,12 +66,6 @@ const testBookingSchema = new mongoose_1.Schema({
         type: Date
         // required: true
     },
-    individuals: {
-        type: Number,
-        required: true,
-        min: 1,
-        default: 1
-    },
     price: {
         type: Number,
         required: true,

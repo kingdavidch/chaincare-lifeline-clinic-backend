@@ -33,7 +33,7 @@ export default class ReviewController {
         patient: patientId,
         clinic: clinicId,
         paymentStatus: "paid",
-        "tests.status": { $in: ["result_ready", "sent"] }
+        "tests.status": { $in: ["result_ready", "sent", "result_sent"] }
       })
 
       if (!existingOrder) {
@@ -137,6 +137,7 @@ export default class ReviewController {
         .populate("patient", "fullName patientId -_id")
         .select("patient rating comment createdAt")
         .sort({ createdAt: -1 })
+        .limit(10)
 
       res.status(httpStatus.OK).json({
         success: true,
@@ -178,52 +179,6 @@ export default class ReviewController {
           comment: review.comment,
           createdAt: review.createdAt
         }
-      })
-    } catch (error) {
-      next(error)
-    }
-  }
-
-  public static async deleteAnonymousReviews(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) {
-    try {
-      // 1. Fetch all reviews
-      const allReviews = await reviewModel.find().populate("patient")
-
-      // 2. Separate reviews by whether patient is null or not
-      const anonymousReviews = allReviews.filter((r: any) => !r.patient)
-      const patientReviews = allReviews.filter((r: any) => r.patient)
-
-      // 3. Collect IDs for both groups
-      const anonymousIds = anonymousReviews.map((r: any) => r._id)
-      const patientIds = patientReviews.map((r: any) => r.patient)
-
-      if (!anonymousIds.length && !patientIds.length) {
-        return res.status(httpStatus.OK).json({
-          success: true,
-          message: "No reviews found to clean up."
-        })
-      }
-
-      // 4. Delete anonymous reviews
-      const deleteResult = await reviewModel.deleteMany({
-        _id: { $in: anonymousIds }
-      })
-
-      // 5. Clean up Clinic references
-      const updateResult = await clinicModel.updateMany(
-        { reviews: { $in: anonymousIds } },
-        { $pull: { reviews: { $in: anonymousIds } } }
-      )
-
-      res.status(httpStatus.OK).json({
-        success: true,
-        message: `Deleted ${deleteResult.deletedCount} anonymous reviews and removed references from ${updateResult.modifiedCount} clinics.`,
-        deletedIds: anonymousIds,
-        patientRefsFound: patientIds // so you can inspect patient-linked reviews
       })
     } catch (error) {
       next(error)

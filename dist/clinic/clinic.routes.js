@@ -43,4 +43,7 @@ clinicRouter.get("/withdrawals", clinic_middleware_1.default.authenticate, (0, a
 clinicRouter.get("/pawapay/payout/:payoutId", (0, async_handler_1.default)(clinic_controller_1.default.getPawaPayPayoutStatus));
 clinicRouter.post("/withdraw/yellowcard", clinic_middleware_1.default.authenticate, clinic_access_guard_1.ClinicAccessGuard, (0, async_handler_1.default)(clinic_controller_1.default.withdrawToBankWithYellowCard));
 clinicRouter.delete("/notifications/clear", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(clinic_controller_1.default.clearClinicNotifications));
+clinicRouter.get("/public/:username", (0, async_handler_1.default)(clinic_controller_1.default.getPublicClinicDetails));
+clinicRouter.put("/categories/update", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(clinic_controller_1.default.updateClinicCategories));
+clinicRouter.get("/practitioner-categories", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(clinic_controller_1.default.getAllCategoriesForClinic));
 exports.default = clinicRouter;

@@ -14,6 +14,12 @@ orderRouter.post(
   asyncHandler(OrderController.checkout)
 )
 
+// Public order checkout (no authentication)
+orderRouter.post(
+  "/checkout/public",
+  asyncHandler(OrderController.checkoutPublic)
+)
+
 orderRouter.get(
   "/patient/orders",
   PatientMiddleware.authenticate,

@@ -6,18 +6,25 @@ import { ITest } from "../test/test.types"
 export interface IOrder {
   orderId: string
   patient: mongoose.Types.ObjectId | IPatient
+  publicBooker?: {
+    fullName?: string
+    phoneNumber?: string
+    email?: string
+  }
+  isPublicBooking?: boolean
   clinic: mongoose.Types.ObjectId | IClinic
   tests: {
     test: mongoose.Types.ObjectId | ITest
     testName: string
     price: number
-    individuals: number
     turnaroundTime: string
     description: string
     testImage?: string
     date?: Date
     time?: string
     scheduledAt?: Date
+    googleEventLink?: string | null
+    googleMeetLink?: string | null
     status:
       | "pending"
       | "sample_collected"

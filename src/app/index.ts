@@ -14,6 +14,7 @@ import patientRouter from "../patient/patient.routes"
 import testBookingRouter from "../testBooking(Cart)/testBooking.routes"
 import subscriptionRouter from "../subscription/subscription.routes"
 import discountRouter from "../discount/discount.routes"
+import availabilityRouter from "../availability/availability.route"
 import orderRouter from "../order/order.routes"
 import claimRouter from "../claim/claim.routes"
 import testResultRouter from "../testResult/test.result.routes"
@@ -37,7 +38,8 @@ export default class App {
     const allowedOrigins = [
       process.env.FRONTEND_URL,
       process.env.FRONTEND_URL_ADMIN,
-      process.env.FRONTEND_URL_DEV
+      process.env.FRONTEND_URL_DEV,
+      process.env.CLINIC_PUBLIC_URL
     ].filter(Boolean) as string[]
 
     app
@@ -69,6 +71,7 @@ export default class App {
       .use(`${globalRoutePrefix}/tests`, testRouter)
       .use(`${globalRoutePrefix}/cart`, testBookingRouter)
       .use(`${globalRoutePrefix}/discount`, discountRouter)
+      .use(`${globalRoutePrefix}/availability`, availabilityRouter)
       .use(`${globalRoutePrefix}/orders`, orderRouter)
       .use(`${globalRoutePrefix}/payment`, paymentRouter)
       .use(`${globalRoutePrefix}/test-result`, testResultRouter)

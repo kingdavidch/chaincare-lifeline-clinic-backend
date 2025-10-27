@@ -336,17 +336,10 @@ export default class TestController {
 
       const clinic = await clinicModel
         .findById(test.clinic)
-        .select("avatar clinicName country contractAccepted")
+        .select("avatar clinicName country contractAccepted clinicId _id")
 
       if (!clinic) {
         throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
-      }
-
-      if (clinic.country.toLowerCase() !== patient.country.toLowerCase()) {
-        throw new AppError(
-          httpStatus.FORBIDDEN,
-          "This test is not available in your country."
-        )
       }
 
       // 🔍 Get test image from TestItem
@@ -356,7 +349,8 @@ export default class TestController {
 
       const testDetailsForPatient = {
         _id: test?._id,
-        clinicId: test?.clinic,
+        clinicId: clinic.clinicId,
+        clinic_id: clinic._id,
         testName: test?.testName,
         price: test?.price,
         currencySymbol: test?.currencySymbol,
@@ -595,35 +589,6 @@ export default class TestController {
     }
   }
 
-  public static async clearAllTests(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) {
-    try {
-      const clinicId = getClinicId(req)
-
-      // Validate Clinic
-      const clinic = await clinicModel.findById(clinicId)
-      if (!clinic) {
-        throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
-      }
-
-      // Delete all tests associated with the clinic
-      await TestModel.deleteMany({ clinic: clinicId })
-
-      // Remove test references from the clinic model
-      await clinicModel.findByIdAndUpdate(clinicId, { $set: { tests: [] } })
-
-      res.status(httpStatus.OK).json({
-        success: true,
-        message: "All tests have been cleared successfully!"
-      })
-    } catch (error) {
-      next(error)
-    }
-  }
-
   /**
    * Get Supported Tests With Clinic Status
    */
@@ -683,18 +648,21 @@ export default class TestController {
     next: NextFunction
   ) {
     try {
-      const { location, insurance, coveredByLifeLine } = req.query
+      const {
+        location,
+        insurance,
+        coveredByLifeLine,
+        deliveryMethod,
+        languages
+      } = req.query
       const patientId = getPatientId(req)
 
-      const patient = await patientModel
-        .findById(patientId)
-        .select("country email")
+      const patient = await patientModel.findById(patientId).select("email")
       if (!patient) {
         throw new AppError(httpStatus.NOT_FOUND, "Patient not found.")
       }
 
       const clinicQuery: any = {
-        country: patient.country.toLowerCase(),
         status: "approved"
       }
 
@@ -712,6 +680,15 @@ export default class TestController {
 
       if (insurance) {
         clinicQuery.supportInsurance = { $in: [Number(insurance)] }
+      }
+
+      if (deliveryMethod !== undefined) {
+        clinicQuery.deliveryMethods = { $in: [Number(deliveryMethod)] }
+      }
+
+      if (languages) {
+        const lang = (languages as string).toLowerCase().trim()
+        clinicQuery.languages = { $in: [lang] }
       }
 
       let clinics = await clinicModel
@@ -804,20 +781,10 @@ export default class TestController {
         throw new AppError(httpStatus.NOT_FOUND, "Test not found.")
       }
 
-      const originalClinic = await clinicModel
-        .findById(originalTest.clinic)
-        .select("country")
+      const originalClinic = await clinicModel.findById(originalTest.clinic)
+
       if (!originalClinic) {
         throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
-      }
-
-      if (
-        originalClinic.country.toLowerCase() !== patient.country.toLowerCase()
-      ) {
-        throw new AppError(
-          httpStatus.FORBIDDEN,
-          "This test is not available in your country."
-        )
       }
 
       const matchingTests = await TestModel.find({

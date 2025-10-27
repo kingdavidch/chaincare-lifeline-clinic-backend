@@ -36,12 +36,6 @@ const testBookingSchema = new Schema<ITestBooking>(
       type: Date
       // required: true
     },
-    individuals: {
-      type: Number,
-      required: true,
-      min: 1,
-      default: 1
-    },
     price: {
       type: Number,
       required: true,

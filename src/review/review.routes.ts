@@ -19,14 +19,8 @@ reviewRouter.patch(
 )
 
 reviewRouter.get(
-  "/",
-  PatientMiddleware.authenticate,
-  asyncHandler(ReviewController.deleteAnonymousReviews)
-)
-
-reviewRouter.get(
   "/patient/:reviewId",
-  PatientMiddleware.authenticate, 
+  PatientMiddleware.authenticate,
   asyncHandler(ReviewController.getPatientReviewById)
 )
 

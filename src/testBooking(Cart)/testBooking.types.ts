@@ -15,7 +15,6 @@ export interface ITestBooking {
   date: Date
   time: string
   scheduledAt: Date
-  individuals: number
   price: number
   status: "pending" | "booked" | "completed" | "cancelled"
   testLocation: string

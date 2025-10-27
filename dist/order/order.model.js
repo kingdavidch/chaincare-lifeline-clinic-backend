@@ -45,7 +45,16 @@ const orderSchema = new mongoose_1.Schema({
     patient: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: "Patient",
-        required: true
+        required: false
+    },
+    publicBooker: {
+        fullName: { type: String, required: false },
+        phoneNumber: { type: String, required: false },
+        email: { type: String, required: false }
+    },
+    isPublicBooking: {
+        type: Boolean,
+        default: false
     },
     clinic: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -57,13 +66,20 @@ const orderSchema = new mongoose_1.Schema({
             test: { type: mongoose_1.Schema.Types.ObjectId, ref: "Test", required: true },
             testName: { type: String, required: true },
             price: { type: Number, required: true },
-            individuals: { type: Number, required: true },
             turnaroundTime: { type: String, required: true },
             description: { type: String },
             testImage: { type: String },
             date: { type: Date },
             time: { type: String },
             scheduledAt: { type: Date },
+            googleEventLink: {
+                type: String,
+                default: null
+            },
+            googleMeetLink: {
+                type: String,
+                default: null
+            },
             status: {
                 type: String,
                 enum: [
@@ -124,6 +140,7 @@ const orderSchema = new mongoose_1.Schema({
         required: true
         // 0 = Home service
         // 1 = In-person
+        // 2 = Online session
     },
     totalAmount: { type: Number, required: true },
     appliedDiscount: {

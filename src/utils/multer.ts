@@ -7,8 +7,8 @@ const allowedFileTypes: Record<string, { types: RegExp; maxSize: number }> = {
   avatar: { types: /jpeg|jpg|png|gif/, maxSize: 5 * 1024 * 1024 }, // Adding avatar as an alias for image
   testResult: { types: /pdf/, maxSize: 10 * 1024 * 1024 }, // 10MB limit for test result PDFs
   certificate: {
-    types: /pdf|jpeg|jpg|png|gif/, 
-    maxSize: 10 * 1024 * 1024 // 10MB limit
+    types: /pdf|jpeg|jpg|png|gif/,
+    maxSize: 5 * 1024 * 1024 // 5MB limit
   }
 }
 

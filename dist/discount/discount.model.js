@@ -63,12 +63,12 @@ const discountSchema = new mongoose_1.Schema({
         type: Number,
         default: 0 // 0 = active, 1 = expired
     },
+    isHidden: { type: Boolean, default: false },
     isDeleted: {
         type: Boolean,
         default: false
     }
 }, { timestamps: true });
-discountSchema.index({ code: 1, clinic: 1 }, { unique: true });
 discountSchema.plugin(autoIncrement, {
     inc_field: "discountNo",
     start_seq: 1000

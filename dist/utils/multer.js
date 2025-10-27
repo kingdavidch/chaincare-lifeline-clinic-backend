@@ -12,7 +12,7 @@ const allowedFileTypes = {
     testResult: { types: /pdf/, maxSize: 10 * 1024 * 1024 }, // 10MB limit for test result PDFs
     certificate: {
         types: /pdf|jpeg|jpg|png|gif/,
-        maxSize: 10 * 1024 * 1024 // 10MB limit
+        maxSize: 5 * 1024 * 1024 // 5MB limit
     }
 };
 const createFileFilter = (allowedTypes) => (req, file, cb) => {

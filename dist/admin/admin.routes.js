@@ -54,4 +54,11 @@ adminRouter.delete("/purge/clinic", admin_middleware_1.default.authenticate, (0,
 adminRouter.post("/clinics/create", admin_middleware_1.default.authenticate, (0, async_handler_1.default)(admin_controller_1.default.createSingleClinic));
 // Clear all notifications
 adminRouter.delete("/notifications/clear", admin_middleware_1.default.authenticate, (0, async_handler_1.default)(admin_controller_1.default.clearAdminNotifications));
+// Create a new practitioner category
+adminRouter.post("/practitioner-categories", admin_middleware_1.default.authenticate, (0, async_handler_1.default)(admin_controller_1.default.createPractitionerCategory));
+// Update an existing practitioner category
+adminRouter.put("/practitioner-categories/:id", admin_middleware_1.default.authenticate, (0, async_handler_1.default)(admin_controller_1.default.updatePractitionerCategory));
+// Delete a practitioner category
+adminRouter.delete("/practitioner-categories/:id", admin_middleware_1.default.authenticate, (0, async_handler_1.default)(admin_controller_1.default.deletePractitionerCategory));
+adminRouter.get("/practitioner-categories", admin_middleware_1.default.authenticate, (0, async_handler_1.default)(admin_controller_1.default.getAllCategoriesForAdmin));
 exports.default = adminRouter;

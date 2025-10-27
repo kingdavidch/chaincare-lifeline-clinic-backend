@@ -32,6 +32,7 @@ const discountSchema = new Schema<IDiscount>(
       type: Number,
       default: 0 // 0 = active, 1 = expired
     },
+    isHidden: { type: Boolean, default: false },
     isDeleted: {
       type: Boolean,
       default: false
@@ -39,8 +40,6 @@ const discountSchema = new Schema<IDiscount>(
   },
   { timestamps: true }
 )
-
-discountSchema.index({ code: 1, clinic: 1 }, { unique: true })
 
 discountSchema.plugin(autoIncrement, {
   inc_field: "discountNo",

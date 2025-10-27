@@ -7,6 +7,7 @@ export interface IDiscount extends Document {
   validUntil: Date
   status: number
   discountNo?: number
+  isHidden?: boolean
   isDeleted: boolean
   createdAt?: Date
   updatedAt?: Date

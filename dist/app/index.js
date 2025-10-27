@@ -17,6 +17,7 @@ const patient_routes_1 = __importDefault(require("../patient/patient.routes"));
 const testBooking_routes_1 = __importDefault(require("../testBooking(Cart)/testBooking.routes"));
 const subscription_routes_1 = __importDefault(require("../subscription/subscription.routes"));
 const discount_routes_1 = __importDefault(require("../discount/discount.routes"));
+const availability_route_1 = __importDefault(require("../availability/availability.route"));
 const order_routes_1 = __importDefault(require("../order/order.routes"));
 const claim_routes_1 = __importDefault(require("../claim/claim.routes"));
 const test_result_routes_1 = __importDefault(require("../testResult/test.result.routes"));
@@ -37,7 +38,8 @@ class App {
         const allowedOrigins = [
             process.env.FRONTEND_URL,
             process.env.FRONTEND_URL_ADMIN,
-            process.env.FRONTEND_URL_DEV
+            process.env.FRONTEND_URL_DEV,
+            process.env.CLINIC_PUBLIC_URL
         ].filter(Boolean);
         app
             .use((0, cors_1.default)({
@@ -65,6 +67,7 @@ class App {
             .use(`${globalRoutePrefix}/tests`, test_routes_1.default)
             .use(`${globalRoutePrefix}/cart`, testBooking_routes_1.default)
             .use(`${globalRoutePrefix}/discount`, discount_routes_1.default)
+            .use(`${globalRoutePrefix}/availability`, availability_route_1.default)
             .use(`${globalRoutePrefix}/orders`, order_routes_1.default)
             .use(`${globalRoutePrefix}/payment`, payment_routes_1.default)
             .use(`${globalRoutePrefix}/test-result`, test_result_routes_1.default)

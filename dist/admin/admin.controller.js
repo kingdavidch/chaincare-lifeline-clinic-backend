@@ -42,6 +42,8 @@ const admin_notification_model_1 = __importDefault(require("./admin.notification
 const utils_2 = require("../order/utils");
 const patient_notification_model_1 = __importDefault(require("../patient/patient.notification.model"));
 const review_model_1 = __importDefault(require("../review/review.model"));
+const utils_3 = require("./utils");
+const practitionercategory_model_1 = __importDefault(require("../clinic/practitionercategory.model"));
 class AdminController {
     // auth
     static signup(req, res, next) {
@@ -102,13 +104,7 @@ class AdminController {
                 const token = jsonwebtoken_1.default.sign(payload, process.env.JWT_SECRET);
                 admin.lastLogin = new Date();
                 yield admin.save();
-                yield admin_notification_model_1.default.create({
-                    admin: admin._id,
-                    title: "Successful Login Attempt",
-                    message: `Your account was successfully accessed on ${(0, moment_1.default)().format("MMMM Do YYYY, h:mm:ss a")}. If this was not you, please contact support immediately.`,
-                    type: "info",
-                    isRead: false
-                });
+                yield (0, utils_3.notifyAdmin)("Successful Login Attempt", `Your account was successfully accessed on ${(0, moment_1.default)().format("MMMM Do YYYY, h:mm:ss a")}. If this was not you, please contact support immediately.`, "info");
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Login successful. Welcome back!",
@@ -145,13 +141,7 @@ class AdminController {
                     .catch((error) => {
                     console.error("Error sending email:", error);
                 });
-                yield admin_notification_model_1.default.create({
-                    admin: admin._id,
-                    title: "Password Reset Requested",
-                    message: "A password reset request was initiated for your account. If this wasn't you, please contact support immediately.",
-                    type: "warning",
-                    isRead: false
-                });
+                yield (0, utils_3.notifyAdmin)("Password Reset Requested", "A password reset request was initiated for your account. If this wasn't you, please contact support immediately.", "warning");
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Password reset link has been sent to your email."
@@ -186,13 +176,7 @@ class AdminController {
                 admin.resetPasswordToken = undefined;
                 admin.resetPasswordExpires = undefined;
                 yield admin.save();
-                yield admin_notification_model_1.default.create({
-                    admin: admin._id,
-                    title: "Password Reset Successful",
-                    message: "Your password has been successfully updated. If this wasn't you, please contact support immediately.",
-                    type: "info",
-                    isRead: false
-                });
+                yield (0, utils_3.notifyAdmin)("Password Reset Successful", "Your password has been successfully updated. If this wasn't you, please contact support immediately.", "info");
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Your password has been successfully reset."
@@ -393,16 +377,7 @@ class AdminController {
                     type: "alert",
                     isRead: false
                 });
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create({
-                        admin: admin._id,
-                        title: `Clinic ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-                        message: `Clinic "${clinic.clinicName}" has been marked as ${status}${reason ? `. Reason: ${reason}` : ""}`,
-                        type: "info",
-                        isRead: false
-                    });
-                }
+                yield (0, utils_3.notifyAdmin)(`Clinic ${status.charAt(0).toUpperCase() + status.slice(1)}`, `Clinic "${clinic.clinicName}" has been marked as ${status}${reason ? `. Reason: ${reason}` : ""}`, "info");
                 // Optionally send email
                 yield smtp_clinic_service_1.default.sendStatusUpdateEmail(clinic, status, reason)
                     .then(() => {
@@ -433,9 +408,12 @@ class AdminController {
                 if (!clinic) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
                 }
-                if (!clinic.certificate || !clinic.certificate.file) {
-                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Clinic has not uploaded a certificate.");
-                }
+                // if (!clinic.certificate || !clinic.certificate.file) {
+                //   throw new AppError(
+                //     httpStatus.BAD_REQUEST,
+                //     "Clinic has not uploaded a certificate."
+                //   )
+                // }
                 clinic.certificate.status = status;
                 clinic.certificate.status = status;
                 if (status === "rejected") {
@@ -1952,6 +1930,95 @@ class AdminController {
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "All notifications cleared successfully."
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static createPractitionerCategory(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                (0, utils_1.handleRequiredFields)(req, ["name", "type"]);
+                const { name, type, description } = req.body;
+                const exists = yield practitionercategory_model_1.default.exists({
+                    name: new RegExp(`^${name}$`, "i"),
+                    type
+                });
+                if (exists) {
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Category already exists for this type.");
+                }
+                yield practitionercategory_model_1.default.create({
+                    name,
+                    type,
+                    description
+                });
+                res.status(http_status_1.default.CREATED).json({
+                    success: true,
+                    message: "Category created successfully."
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static updatePractitionerCategory(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { id } = req.params;
+                const { name, type, description } = req.body;
+                const category = yield practitionercategory_model_1.default.findById(id);
+                if (!category) {
+                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Category not found.");
+                }
+                category.name = name || category.name;
+                category.type = type || category.type;
+                category.description = description || category.description;
+                yield category.save();
+                res.status(http_status_1.default.OK).json({
+                    success: true,
+                    message: "Category updated successfully."
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static deletePractitionerCategory(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { id } = req.params;
+                const category = yield practitionercategory_model_1.default.findById(id);
+                if (!category) {
+                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Category not found.");
+                }
+                const categoryInUse = yield clinic_model_1.default.exists({ categories: id });
+                if (categoryInUse) {
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Category is in use by one or more clinics. Cannot delete.");
+                }
+                yield category.deleteOne();
+                res.status(http_status_1.default.OK).json({
+                    success: true,
+                    message: "Category deleted successfully."
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static getAllCategoriesForAdmin(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const categories = yield practitionercategory_model_1.default
+                    .find()
+                    .sort({ createdAt: -1 });
+                res.status(http_status_1.default.OK).json({
+                    success: true,
+                    data: categories
                 });
             }
             catch (error) {

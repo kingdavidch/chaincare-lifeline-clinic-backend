@@ -9,7 +9,7 @@ export async function revalidateDiscount(booking: BookingDoc | null) {
   if (!booking) return booking
 
   const now = moment.utc()
-  const subtotal = booking.price * booking.individuals
+  const subtotal = booking.price
 
   await discountModel.updateMany(
     { clinic: booking.clinic, validUntil: { $lt: now.toDate() }, status: 0 },

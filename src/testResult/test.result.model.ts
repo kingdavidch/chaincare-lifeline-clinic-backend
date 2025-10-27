@@ -22,7 +22,7 @@ const testResultSchema = new Schema<ITestResult>(
     patient: {
       type: Schema.Types.ObjectId,
       ref: "Patient",
-      required: true
+      required: false
     },
     clinic: {
       type: Schema.Types.ObjectId,

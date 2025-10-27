@@ -35,7 +35,6 @@ testRouter.get("/names/all", clinic_middleware_1.default.authenticate, (0, async
 testRouter.get("/clinic/tests/all", (0, async_handler_1.default)(test_controller_1.default.getAllTests));
 // Route to bulk upload 25 test records
 testRouter.post("/bulk-upload", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(test_controller_1.default.bulkUploadTests));
-testRouter.delete("/clear-tests", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(test_controller_1.default.clearAllTests));
 testRouter.get("/clinics/similar-test/:testId", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(test_controller_1.default.getClinicsWithSameTest));
 // Get supported tests with clinic status
 testRouter.get("/clinic/supported-tests", clinic_middleware_1.default.authenticate, clinic_access_guard_1.ClinicAccessGuard, (0, async_handler_1.default)(test_controller_1.default.getSupportedTestsWithStatus));

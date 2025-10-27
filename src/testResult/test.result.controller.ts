@@ -368,7 +368,6 @@ export default class TestResultController {
             refNo: result.refNo,
             resultFile: result.resultFile,
             clinicName: clinic?.clinicName || "",
-            individuals: testBooking.individuals,
             date: new Date(result.uploadedAt).toLocaleDateString("en-US", {
               weekday: "short",
               day: "numeric",

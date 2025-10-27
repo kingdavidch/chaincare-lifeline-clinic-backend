@@ -21,7 +21,7 @@ function revalidateDiscount(booking) {
         if (!booking)
             return booking;
         const now = moment_1.default.utc();
-        const subtotal = booking.price * booking.individuals;
+        const subtotal = booking.price;
         yield discount_model_1.default.updateMany({ clinic: booking.clinic, validUntil: { $lt: now.toDate() }, status: 0 }, { $set: { status: 1 } });
         if (!((_a = booking.discount) === null || _a === void 0 ? void 0 : _a.code)) {
             booking.discount = {

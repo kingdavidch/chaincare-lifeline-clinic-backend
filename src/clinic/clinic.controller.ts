@@ -9,9 +9,6 @@ import moment from "moment"
 import mongoose from "mongoose"
 import { v4 as uuidv4 } from "uuid"
 import { io } from ".."
-import adminModel from "../admin/admin.model"
-import adminNotificationModel from "../admin/admin.notification.model"
-import { COUNTRIES } from "../constant"
 import orderModel from "../order/order.model"
 import PatientModel from "../patient/patient.model"
 import { YellowCardService } from "../payment/payment.service"
@@ -31,6 +28,14 @@ import AppError from "../utils/app.error"
 import { comparePasswords, hashPassword } from "../utils/password.utils"
 import ClinicModel from "./clinic.model"
 import clinicNotificationModel from "./clinic.notification.model"
+import { notifyAdmin } from "../admin/utils"
+import testItemModel from "../test/test.item.model"
+import { IReview } from "../review/review.types"
+import countries from "world-countries"
+import getSymbolFromCurrency from "currency-symbol-map"
+import { SocialMedia } from "./clinic.types"
+import discountModel from "../discount/discount.model"
+import practitionerCategoryModel from "./practitionercategory.model"
 
 export default class ClinicController {
   public static async signup(
@@ -66,16 +71,18 @@ export default class ClinicController {
         country
       } = req.body
 
-      // Get currency symbol based on country
-      const countryData = COUNTRIES?.find(
-        (c) => c.value.toLowerCase() === country.toLowerCase()
+      const matchedCountry = countries.find(
+        (c) => c.name.common.toLowerCase() === country.toLowerCase()
       )
-      const currencySymbol = countryData ? countryData.currencySymbol : ""
 
-      // Check if the email already exists in either patients or clinics
+      const currencyCode = matchedCountry
+        ? Object.keys(matchedCountry.currencies || {})[0]
+        : "RWF"
+
+      const currencySymbol = getSymbolFromCurrency(currencyCode) || "$"
+
       const existingPatientByEmail = await PatientModel.findOne({ email })
       const existingClinicByEmail = await ClinicModel.findOne({ email })
-
       if (existingPatientByEmail || existingClinicByEmail) {
         throw new AppError(
           httpStatus.CONFLICT,
@@ -83,14 +90,22 @@ export default class ClinicController {
         )
       }
 
-      // Check if the phone number already exists in clinics
-      const existingPhone = await PatientModel.findOne({ phoneNo })
+      const existingPatientPhone = await PatientModel.findOne({ phoneNo })
       const existingClinicPhone = await ClinicModel.findOne({ phoneNo })
-
-      if (existingPhone || existingClinicPhone) {
+      if (existingPatientPhone || existingClinicPhone) {
         throw new AppError(
           httpStatus.CONFLICT,
           "Phone number is already in use."
+        )
+      }
+
+      const existingClinicName = await ClinicModel.findOne({
+        clinicName: { $regex: new RegExp(`^${clinicName}$`, "i") }
+      })
+      if (existingClinicName) {
+        throw new AppError(
+          httpStatus.CONFLICT,
+          "A clinic with this name already exists."
         )
       }
 
@@ -116,6 +131,21 @@ export default class ClinicController {
           : { latitude: null, longitude: null }
       }
 
+      const formattedUsername = clinicName
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, "_")
+
+      const existingUsername = await ClinicModel.findOne({
+        username: formattedUsername
+      })
+      if (existingUsername) {
+        throw new AppError(
+          httpStatus.CONFLICT,
+          "Clinic name already in use, please choose another."
+        )
+      }
+
       const newClinic = new ClinicModel({
         clinicName,
         email,
@@ -124,30 +154,23 @@ export default class ClinicController {
         password: hashedPassword,
         termsAccepted,
         country,
-        currencySymbol
+        currencySymbol,
+        username: formattedUsername
       })
 
       await newClinic.save()
 
-      const admin = await adminModel.findOne()
-
-      if (admin) {
-        await adminNotificationModel.create({
-          admin: admin._id,
-          title: "New Clinic Registration",
-          message: `Clinic "${clinicName}" has just signed up and is awaiting approval.`,
-          type: "info",
-          isRead: false
-        })
-      }
+      await notifyAdmin(
+        "New Clinic Registration",
+        `Clinic "${clinicName}" has just signed up and is awaiting approval.`,
+        "info"
+      )
 
       await SmtpService.sendClinicVerificationEmail(newClinic)
-        .then(() => {
-          console.log("Verification email sent successfully.")
-        })
-        .catch((error) => {
+        .then(() => console.log("Verification email sent successfully."))
+        .catch((error) =>
           console.error("Error sending verification email:", error)
-        })
+        )
 
       res.status(httpStatus.CREATED).json({
         success: true,
@@ -471,7 +494,8 @@ export default class ClinicController {
         )
         .populate({
           path: "reviews",
-          select: "rating comment patient",
+          select: "rating comment patient createdAt",
+          options: { sort: { createdAt: -1 }, limit: 10 },
           populate: {
             path: "patient",
             select: "fullName"
@@ -482,10 +506,29 @@ export default class ClinicController {
         throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
       }
 
+      const discounts = await discountModel
+        .find({
+          clinic: clinicId,
+          validUntil: { $gte: new Date() },
+          status: 0,
+          isDeleted: false,
+          isHidden: false
+        })
+        .select(
+          "code percentage validUntil status isHidden createdAt updatedAt discountNo -_id"
+        )
+        .lean()
+
+      const shareUrl = `${process.env.CLINIC_PUBLIC_URL}/${clinic.username}`
+
       res.status(httpStatus.OK).json({
         success: true,
         message: "Clinic information retrieved successfully.",
-        data: clinic
+        data: {
+          ...clinic.toObject(),
+          discounts: discounts || [],
+          shareUrl
+        }
       })
     } catch (error) {
       next(error)
@@ -518,7 +561,11 @@ export default class ClinicController {
         country,
         supportInsurance,
         onlineStatus,
-        currencySymbol
+        languages,
+        deliveryMethods,
+        username,
+        socialMedia,
+        practitionerType
       } = req.body
       let profilePhotoUrl = clinic.avatar
 
@@ -578,6 +625,10 @@ export default class ClinicController {
         clinic.phoneNo = phoneNo
         updatedFields.push("phoneNo")
       }
+      if (practitionerType) {
+        clinic.practitionerType = practitionerType.toLowerCase().trim()
+        updatedFields.push("practitionerType")
+      }
       if (bio) {
         clinic.bio = bio
         updatedFields.push("bio")
@@ -623,13 +674,58 @@ export default class ClinicController {
         clinic.supportInsurance = JSON.parse(supportInsurance)
         updatedFields.push("supportInsurance")
       }
-      if (currencySymbol) {
-        clinic.currencySymbol = currencySymbol
-        updatedFields.push("currencySymbol")
-      }
       if (profilePhotoUrl) {
         clinic.avatar = profilePhotoUrl
         updatedFields.push("avatar")
+      }
+      if (languages) {
+        clinic.languages = JSON.parse(languages)
+        updatedFields.push("languages")
+      }
+      if (username) {
+        const formattedUsername = username
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, "_")
+
+        const existingUsername = await ClinicModel.findOne({
+          username: formattedUsername,
+          _id: { $ne: clinicId }
+        })
+
+        if (existingUsername) {
+          throw new AppError(httpStatus.CONFLICT, "Username already in use.")
+        }
+
+        clinic.username = formattedUsername
+        updatedFields.push("username")
+      }
+      if (deliveryMethods) {
+        const parsedDelivery = Array.isArray(deliveryMethods)
+          ? deliveryMethods
+          : JSON.parse(deliveryMethods)
+
+        clinic.deliveryMethods = parsedDelivery
+        updatedFields.push("deliveryMethods")
+      }
+
+      if (socialMedia) {
+        try {
+          const parsedSocial: Partial<SocialMedia> =
+            typeof socialMedia === "string"
+              ? JSON.parse(socialMedia)
+              : socialMedia
+
+          clinic.socialMedia = parsedSocial
+
+          clinic.markModified("socialMedia")
+          updatedFields.push("socialMedia")
+        } catch (err) {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            "Invalid socialMedia format"
+          )
+        }
       }
 
       await clinic.save()
@@ -639,6 +735,47 @@ export default class ClinicController {
       res.status(httpStatus.OK).json({
         success: true,
         message: "Profile updated successfully."
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  public static async updateClinicCategories(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const clinicId = getClinicId(req)
+      const { categories } = req.body
+
+      if (!Array.isArray(categories) || categories.length === 0) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Categories are required.")
+      }
+
+      const clinic = await ClinicModel.findById(clinicId)
+      if (!clinic) {
+        throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
+      }
+
+      const validCategories = await practitionerCategoryModel.find({
+        _id: { $in: categories }
+      })
+
+      if (validCategories.length !== categories.length) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "Some categories are invalid."
+        )
+      }
+
+      clinic.categories = categories
+      await clinic.save()
+
+      res.status(httpStatus.OK).json({
+        success: true,
+        message: "Clinic categories updated successfully."
       })
     } catch (error) {
       next(error)
@@ -1013,7 +1150,7 @@ export default class ClinicController {
         {
           $group: {
             _id: { $dateToString: { format: groupFormat, date: "$createdAt" } },
-            totalSales: { $sum: "$tests.individuals" }
+            totalSales: { $sum: "$tests.price" }
           }
         },
         { $sort: { _id: 1 } }
@@ -1362,15 +1499,11 @@ export default class ClinicController {
       clinic.certificate.status = "pending"
       await clinic.save()
 
-      const admin = await adminModel.findOne()
-
-      await adminNotificationModel.create({
-        admin: admin?._id,
-        title: "Clinic Certificate",
-        message: `Clinic ${clinic.clinicName} has uploaded a new certificate for verification.`,
-        type: "info",
-        isRead: false
-      })
+      await notifyAdmin(
+        "Clinic Certificate",
+        `Clinic ${clinic.clinicName} has uploaded a new certificate for verification.`,
+        "info"
+      )
 
       await clinicNotificationModel.create({
         clinic: clinic._id,
@@ -1413,16 +1546,11 @@ export default class ClinicController {
       clinic.contractAccepted = true
       await clinic.save()
 
-      const admin = await adminModel.findOne()
-      if (admin) {
-        await adminNotificationModel.create({
-          admin: admin._id,
-          title: "Contract Accepted",
-          message: `Clinic ${clinic.clinicName} has accepted the contract.`,
-          type: "info",
-          isRead: false
-        })
-      }
+      await notifyAdmin(
+        "Contract Accepted",
+        `Clinic ${clinic.clinicName} has accepted the contract.`,
+        "info"
+      )
 
       SmtpService.sendContractAcceptanceEmail(clinic)
         .then(() => {
@@ -1542,18 +1670,11 @@ export default class ClinicController {
         }
       ])
 
-      const admin = await adminModel.findOne()
-      if (admin) {
-        await adminNotificationModel.create([
-          {
-            admin: admin._id,
-            title: "Clinic Withdrawal Requested",
-            message: `Clinic "${clinic.clinicName}" requested ${amount.toLocaleString()} RWF to ${sanitizedPhone}.`,
-            type: "alert",
-            isRead: false
-          }
-        ])
-      }
+      await notifyAdmin(
+        "Clinic Withdrawal Requested",
+        `Clinic "${clinic.clinicName}" requested ${amount.toLocaleString()} RWF to ${sanitizedPhone}.`,
+        "alert"
+      )
 
       res.status(httpStatus.OK).json({
         success: true,
@@ -1849,18 +1970,11 @@ export default class ClinicController {
         }
       ])
 
-      const admin = await adminModel.findOne()
-      if (admin) {
-        await adminNotificationModel.create([
-          {
-            admin: admin._id,
-            title: "Clinic Withdrawal Alert",
-            message: `Clinic ${clinicId} initiated a ${amount.toLocaleString()} RWF withdrawal to ${accountNumber}.`,
-            type: "wallet",
-            isRead: false
-          }
-        ])
-      }
+      await notifyAdmin(
+        "Clinic Withdrawal Alert",
+        `Clinic ${clinicId} initiated a ${amount.toLocaleString()} RWF withdrawal to ${accountNumber}.`,
+        "wallet"
+      )
 
       res.status(httpStatus.OK).json({
         success: true,
@@ -2012,6 +2126,130 @@ export default class ClinicController {
             subtext: "this week"
           }
         }
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  public static async getPublicClinicDetails(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { username } = req.params
+
+      const clinic = await ClinicModel.findOne({
+        username: username.toLowerCase(),
+        status: "approved"
+      })
+        .select(
+          "clinicName clinicId location bio avatar reviews supportInsurance isVerified onlineStatus country contractAccepted languages username deliveryMethods socialMedia"
+        )
+        .populate({
+          path: "reviews",
+          select: "reviewNo rating comment patient createdAt",
+          options: { sort: { createdAt: -1 }, limit: 10 },
+          populate: {
+            path: "patient",
+            select: "fullName"
+          }
+        })
+
+      if (!clinic) {
+        throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
+      }
+
+      const [tests, allTestItem] = await Promise.all([
+        testModel
+          .find({ clinic: clinic._id })
+          .select(
+            "testNo testName price turnaroundTime preTestRequirements homeCollection currencySymbol insuranceCoverage coveredByLifeLine description socialMedia"
+          )
+          .lean(),
+        testItemModel.find().select("name image")
+      ])
+
+      const testsWithImages = tests
+        .map((test) => {
+          const testImage =
+            allTestItem.find(
+              (cat) => cat.name.toLowerCase() === test.testName.toLowerCase()
+            )?.image || ""
+
+          return {
+            testNo: test.testNo,
+            clinicId: test.clinic,
+            testName: test.testName,
+            price: test.price,
+            currencySymbol: test.currencySymbol,
+            turnaroundTime: test.turnaroundTime,
+            preTestRequirements: test.preTestRequirements,
+            homeCollection: test.homeCollection,
+            insuranceCoverage: test.insuranceCoverage,
+            description: test.description,
+            sampleType: test.sampleType,
+            testImage: testImage,
+            clinicImage: clinic.avatar || null,
+            clinicName: clinic.clinicName
+          }
+        })
+        .sort((a, b) => a?.testName?.localeCompare(b.testName))
+
+      const populatedReviews = clinic.reviews as unknown as IReview[]
+
+      const formattedReviews = populatedReviews.map((review) => ({
+        reviewNo: review.reviewNo,
+        rating: review.rating,
+        comment: review.comment,
+        patientName:
+          typeof review.patient === "object" && "fullName" in review.patient
+            ? (review.patient as { fullName: string }).fullName
+            : undefined
+      }))
+
+      const clinicDetails = {
+        clinicId: clinic.clinicId,
+        clinicName: clinic.clinicName,
+        username: clinic.username,
+        bio: clinic.bio,
+        avatar: clinic.avatar,
+        location: clinic.location,
+        languages: clinic.languages,
+        socialMedia: clinic.socialMedia,
+        deliveryMethods: clinic.deliveryMethods,
+        onlineStatus: clinic.onlineStatus,
+        country: clinic.country,
+        supportInsurance: clinic.supportInsurance,
+        isVerified: clinic.isVerified,
+        reviews: formattedReviews,
+        tests: testsWithImages
+      }
+
+      res.status(httpStatus.OK).json({
+        success: true,
+        message: "Clinic details retrieved successfully.",
+        data: clinicDetails
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  static async getAllCategoriesForClinic(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const categories = await practitionerCategoryModel
+        .find()
+        .sort({ createdAt: -1 })
+
+      res.status(httpStatus.OK).json({
+        success: true,
+        data: categories
       })
     } catch (error) {
       next(error)

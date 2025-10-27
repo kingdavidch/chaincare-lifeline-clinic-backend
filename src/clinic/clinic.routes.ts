@@ -161,4 +161,21 @@ clinicRouter.delete(
   asyncHandler(ClinicController.clearClinicNotifications)
 )
 
+clinicRouter.get(
+  "/public/:username",
+  asyncHandler(ClinicController.getPublicClinicDetails)
+)
+
+clinicRouter.put(
+  "/categories/update",
+  ClinicMiddleware.authenticate,
+  asyncHandler(ClinicController.updateClinicCategories)
+)
+
+clinicRouter.get(
+  "/practitioner-categories",
+  ClinicMiddleware.authenticate,
+  asyncHandler(ClinicController.getAllCategoriesForClinic)
+)
+
 export default clinicRouter

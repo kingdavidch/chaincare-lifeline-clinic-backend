@@ -12,6 +12,8 @@ const clinic_access_guard_1 = require("../clinic/clinic.access.guard");
 const orderRouter = (0, express_1.Router)();
 // Patient routes
 orderRouter.post("/checkout", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(order_controller_1.default.checkout));
+// Public order checkout (no authentication)
+orderRouter.post("/checkout/public", (0, async_handler_1.default)(order_controller_1.default.checkoutPublic));
 orderRouter.get("/patient/orders", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(order_controller_1.default.getUserOrders));
 // Update delivery address
 orderRouter.patch("/:orderId/delivery-address", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(order_controller_1.default.updateDeliveryAddress));

@@ -30,6 +30,7 @@ const app_error_1 = __importDefault(require("../utils/app.error"));
 const password_utils_1 = require("../utils/password.utils");
 const patient_model_1 = __importDefault(require("./patient.model"));
 const patient_notification_model_1 = __importDefault(require("./patient.notification.model"));
+const utils_2 = require("../admin/utils");
 const JWT_SECRET = process.env.JWT_SECRET;
 class PatientController {
     /**
@@ -87,6 +88,7 @@ class PatientController {
                         .then(() => console.log("Welcome email sent to:", email))
                         .catch((err) => console.error("Welcome email failed:", email, err))
                 ]);
+                yield (0, utils_2.notifyAdmin)("New Patient Registration", `Patient "${fullName}" has just signed up.`);
                 res.status(http_status_1.default.CREATED).json({
                     success: true,
                     message: "Signup successful. Please verify your email.",
@@ -636,15 +638,12 @@ class PatientController {
     static getAllClinics(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const { location, insurance, test, supportedByLifeLine } = req.query;
+                const { location, insurance, test, supportedByLifeLine, deliveryMethod, languages } = req.query;
                 const patientId = (0, utils_1.getPatientId)(req);
                 const query = {};
                 const patient = yield patient_model_1.default
                     .findById(patientId)
                     .select("country email");
-                if (patient) {
-                    query.country = patient.country.toLowerCase();
-                }
                 if (location) {
                     const locationRegex = new RegExp(location.toLowerCase(), "i");
                     query.$or = [
@@ -655,6 +654,9 @@ class PatientController {
                 }
                 if (insurance) {
                     query.supportInsurance = { $in: [Number(insurance)] };
+                }
+                if (deliveryMethod) {
+                    query.deliveryMethods = { $in: [Number(deliveryMethod)] };
                 }
                 if (test) {
                     const matchingTests = yield test_model_1.default
@@ -674,9 +676,13 @@ class PatientController {
                 if (supportedByLifeLine !== undefined) {
                     query.contractAccepted = supportedByLifeLine === "true";
                 }
-                const totalClinicsInDatabase = yield clinic_model_1.default.countDocuments();
+                if (languages) {
+                    const lang = languages.toLowerCase().trim();
+                    query.languages = { $in: [lang] };
+                }
                 query.status = "approved";
-                let clinics = yield clinic_model_1.default.find(query).select("clinicName location country avatar supportInsurance contractAccepted email");
+                const totalClinicsInDatabase = yield clinic_model_1.default.countDocuments();
+                let clinics = yield clinic_model_1.default.find(query).select("clinicName location country avatar supportInsurance contractAccepted email languages");
                 const allowedPatientEmail = "sannifortune11@gmail.com";
                 const restrictedClinicEmail = "damilolasanni48@gmail.com";
                 if ((patient === null || patient === void 0 ? void 0 : patient.email) !== allowedPatientEmail) {
@@ -701,7 +707,8 @@ class PatientController {
                         contractAccepted: clinic.contractAccepted
                             ? "Supports LifeLine Subscription"
                             : null,
-                        rating: averageRating
+                        rating: averageRating,
+                        languages: clinic.languages
                     };
                 });
                 formattedClinics.sort((a, b) => { var _a, _b; return (_a = a.clinicName) === null || _a === void 0 ? void 0 : _a.toLowerCase().localeCompare((_b = b.clinicName) === null || _b === void 0 ? void 0 : _b.toLowerCase()); });
@@ -746,10 +753,11 @@ class PatientController {
                     _id: clinicId,
                     status: "approved"
                 })
-                    .select("clinicName location bio clinicId avatar reviews supportInsurance isVerified onlineStatus country contractAccepted")
+                    .select("clinicName location bio clinicId avatar reviews supportInsurance isVerified onlineStatus country contractAccepted languages username deliveryMethods socialMedia")
                     .populate({
                     path: "reviews",
-                    select: "rating comment patient clinic",
+                    select: "rating comment patient clinic createdAt",
+                    options: { sort: { createdAt: -1 }, limit: 10 },
                     populate: {
                         path: "patient",
                         select: "fullName email"
@@ -757,10 +765,6 @@ class PatientController {
                 });
                 if (!clinic) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
-                }
-                const patient = yield patient_model_1.default.findById(patientId).select("country");
-                if (patient && clinic.country !== patient.country) {
-                    throw new app_error_1.default(http_status_1.default.FORBIDDEN, "This clinic is not available in your country.");
                 }
                 const hasOrderedBefore = yield order_model_1.default.exists({
                     patient: patientId,
@@ -778,7 +782,8 @@ class PatientController {
                         clinic: clinicId,
                         validUntil: { $gte: new Date() },
                         status: 0,
-                        isDeleted: false
+                        isDeleted: false,
+                        isHidden: false
                     })
                         .lean()
                 ]);
@@ -798,9 +803,10 @@ class PatientController {
                     };
                 })
                     .sort((a, b) => { var _a; return (_a = a === null || a === void 0 ? void 0 : a.testName) === null || _a === void 0 ? void 0 : _a.localeCompare(b.testName); });
+                const BASE_URL = process.env.CLINIC_PUBLIC_URL || "";
                 const clinicWithTests = Object.assign(Object.assign({}, clinic.toObject()), { tests: testsWithImages, hasOrderedBefore: !!hasOrderedBefore, contractAccepted: clinic.contractAccepted
                         ? "Supports LifeLine Subscription"
-                        : null, discounts: discounts || [] });
+                        : null, discounts: discounts || [], shareUrl: `${BASE_URL}/${clinic.username}` });
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Clinic details retrieved successfully.",
@@ -861,9 +867,6 @@ class PatientController {
                 const query = {
                     status: "approved"
                 };
-                if (patient === null || patient === void 0 ? void 0 : patient.country) {
-                    query.country = patient.country.toLowerCase();
-                }
                 let clinics = yield clinic_model_1.default.find(query).select("clinicName location avatar country email");
                 const allowedPatientEmail = "sannifortune11@gmail.com";
                 const restrictedClinicEmail = "damilolasanni48@gmail.com";

@@ -20,7 +20,7 @@ export default class DiscountController {
     try {
       const clinicId = getClinicId(req)
       handleRequiredFields(req, ["code", "percentage", "validUntil"])
-      const { code, percentage, validUntil } = req.body
+      const { code, percentage, validUntil, isHidden } = req.body
 
       const clinic = await clinicModel.findById(clinicId)
       if (!clinic) throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
@@ -37,70 +37,72 @@ export default class DiscountController {
         )
       }
 
-      // ✅ Create new discount
       const discount = await discountModel.create({
         clinic: clinicId,
         code: code.toUpperCase(),
         percentage,
         validUntil: moment(validUntil).toDate(),
-        status: 0
+        status: 0,
+        isHidden: !!isHidden
       })
 
-      io.emit("discount:create", { clinicId, discount })
+      if (!discount.isHidden) {
+        io.emit("discount:create", { clinicId, discount })
 
-      // 🔔 Push notification logic
-      const restrictedClinicEmail = "damilolasanni48@gmail.com"
-      const allowedPatientEmail = "sannifortune11@gmail.com"
+        const restrictedClinicEmail = "damilolasanni48@gmail.com"
+        const allowedPatientEmail = "sannifortune11@gmail.com"
 
-      if (clinic.email === restrictedClinicEmail) {
-        // ✅ Only send to the allowed patient
-        const patient = await patientModel.findOne({
-          email: allowedPatientEmail,
-          expoPushToken: { $ne: null },
-          isDeleted: false
-        })
-
-        if (patient?.expoPushToken) {
-          await sendPushNotification({
-            expoPushToken: patient.expoPushToken,
-            title: "New Discount Available 🎉",
-            message: `${clinic.clinicName?.toUpperCase()} is offering ${discount.percentage}% OFF with code ${discount.code}`,
-            type: "info",
-            data: {
-              screen: "one_clinic",
-              id: clinic._id.toString(),
-              discountId: (discount._id as Types.ObjectId).toString()
-            }
+        if (clinic.email === restrictedClinicEmail) {
+          const patient = await patientModel.findOne({
+            email: allowedPatientEmail,
+            expoPushToken: { $ne: null },
+            isDeleted: false
           })
+
+          if (patient?.expoPushToken) {
+            await sendPushNotification({
+              expoPushToken: patient.expoPushToken,
+              title: "New Discount Available 🎉",
+              message: `${clinic.clinicName?.toUpperCase()} is offering ${discount.percentage}% OFF with code ${discount.code}`,
+              type: "info",
+              data: {
+                screen: "one_clinic",
+                id: clinic._id.toString(),
+                discountId: (discount._id as Types.ObjectId).toString()
+              }
+            })
+          }
+        } else {
+          const patients = await patientModel.find(
+            { expoPushToken: { $ne: null }, isDeleted: false },
+            { expoPushToken: 1 }
+          )
+
+          const uniqueTokens = Array.from(
+            new Set(patients.map((p) => p.expoPushToken))
+          )
+
+          const pushPayloads = uniqueTokens.map((token) =>
+            sendPushNotification({
+              expoPushToken: token!,
+              title: "New Discount Available 🎉",
+              message: `${clinic.clinicName?.toUpperCase()} is offering ${discount.percentage}% OFF with code ${discount.code}`,
+              type: "info",
+              data: {
+                screen: "one_clinic",
+                id: clinic._id.toString(),
+                discountId: (discount._id as Types.ObjectId).toString()
+              }
+            })
+          )
+
+          await Promise.all(pushPayloads)
         }
-      } else {
-        // 🌍 Broadcast to all patients
-        const patients = await patientModel.find(
-          { expoPushToken: { $ne: null }, isDeleted: false },
-          { expoPushToken: 1 }
-        )
-
-        const pushPayloads = patients.map((p) =>
-          sendPushNotification({
-            expoPushToken: p.expoPushToken!,
-            title: "New Discount Available 🎉",
-            message: `${clinic.clinicName?.toUpperCase()} is offering ${discount.percentage}% OFF with code ${discount.code}`,
-            type: "info",
-            data: {
-              screen: "one_clinic",
-              id: clinic._id.toString(),
-              discountId: (discount._id as Types.ObjectId).toString()
-            }
-          })
-        )
-
-        await Promise.all(pushPayloads)
       }
 
       res.status(httpStatus.CREATED).json({
         success: true,
-        message: "Discount created successfully.",
-        data: discount
+        message: "Discount created successfully."
       })
     } catch (error) {
       next(error)
@@ -144,7 +146,7 @@ export default class DiscountController {
       const discounts = await discountModel
         .find(filter)
         .select(
-          "code percentage status validUntil createdAt updatedAt discountNo"
+          "code percentage status validUntil createdAt updatedAt discountNo isHidden"
         )
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -169,7 +171,8 @@ export default class DiscountController {
           validUntil: moment(d.validUntil).format("DD MMM YYYY"),
           createdAt: moment(d.createdAt).format("DD MMM YYYY, h:mm A"),
           updatedAt: moment(d.updatedAt).format("DD MMM YYYY, h:mm A"),
-          warning
+          warning,
+          isHidden: d.isHidden
         }
       })
 
@@ -228,17 +231,25 @@ export default class DiscountController {
     try {
       const { clinicId } = req.params
 
+      const clinic = await clinicModel.findOne({ clinicId, status: "approved" })
+      if (!clinic) {
+        throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
+      }
+
       await discountModel.updateMany(
-        { clinic: clinicId, validUntil: { $lt: new Date() }, status: 0 },
+        { clinic: clinic._id, validUntil: { $lt: new Date() }, status: 0 },
         { $set: { status: 1 } }
       )
 
-      const discounts = await discountModel.find({
-        clinic: clinicId,
-        validUntil: { $gte: new Date() },
-        status: 0,
-        isDeleted: false
-      })
+      const discounts = await discountModel
+        .find({
+          clinic: clinic._id,
+          validUntil: { $gte: new Date() },
+          status: 0,
+          isDeleted: false,
+          isHidden: false
+        })
+        .select("-_id -clinic -__v")
 
       res.json({ success: true, data: discounts })
     } catch (error) {
@@ -259,13 +270,11 @@ export default class DiscountController {
       const normalizedCode = code.toUpperCase()
       const now = moment.utc()
 
-      // 🔒 Expire past discounts
       await discountModel.updateMany(
         { clinic: clinicId, validUntil: { $lt: now.toDate() }, status: 0 },
         { $set: { status: 1 } }
       )
 
-      // 🔎 Ensure clinic has active discounts
       const activeDiscounts = await discountModel.countDocuments({
         clinic: clinicId,
         status: 0,
@@ -279,7 +288,6 @@ export default class DiscountController {
         )
       }
 
-      // 🎯 Find exact discount code
       const discount = await discountModel.findOne({
         clinic: clinicId,
         code: normalizedCode,
@@ -296,7 +304,6 @@ export default class DiscountController {
         throw new AppError(httpStatus.BAD_REQUEST, "Discount code has expired.")
       }
 
-      // 💰 Calculate new total
       const finalPrice = amount - (amount * discount.percentage) / 100
 
       await testBookingModel.updateMany(
@@ -317,6 +324,76 @@ export default class DiscountController {
         data: {
           discountCode: discount.code,
           percentage: discount.percentage,
+          newTotal: finalPrice,
+          expiresAt: moment(discount.validUntil).format("YYYY-MM-DD HH:mm:ss")
+        }
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  public static async applyDiscountPublic(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      handleRequiredFields(req, ["clinicId", "code", "amount"])
+
+      const { clinicId, code, amount } = req.body
+      const normalizedCode = code.toUpperCase()
+      const now = moment.utc()
+
+      const clinic = await clinicModel.findOne({ clinicId, status: "approved" })
+      if (!clinic) {
+        throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
+      }
+
+      await discountModel.updateMany(
+        { clinic: clinic._id, validUntil: { $lt: now.toDate() }, status: 0 },
+        { $set: { status: 1 } }
+      )
+
+      const activeDiscounts = await discountModel.countDocuments({
+        clinic: clinic._id,
+        status: 0,
+        isDeleted: false,
+        validUntil: { $gte: now.toDate() }
+      })
+      if (activeDiscounts === 0) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "This clinic does not currently have any active discount codes."
+        )
+      }
+
+      const discount = await discountModel.findOne({
+        clinic: clinic._id,
+        code: normalizedCode,
+        status: 0,
+        isDeleted: false,
+        validUntil: { $gte: now.toDate() }
+      })
+
+      if (!discount) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid discount code.")
+      }
+
+      if (!moment(discount.validUntil).isAfter(now)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Discount code has expired.")
+      }
+
+      const discountAmount = (amount * discount.percentage) / 100
+      const finalPrice = amount - discountAmount
+
+      res.json({
+        success: true,
+        message: "Discount applied successfully.",
+        data: {
+          discountCode: discount.code,
+          percentage: discount.percentage,
+          discountAmount,
           newTotal: finalPrice,
           expiresAt: moment(discount.validUntil).format("YYYY-MM-DD HH:mm:ss")
         }

@@ -154,10 +154,12 @@ const patientSchema = new Schema<IPatient>(
       type: String,
       enum: ["national_id", "passport", "license", "other"],
       trim: true
-    }, 
+    },
     expoPushToken: {
       type: String,
-      default: null
+      default: null,
+      unique: true,
+      sparse: true
     },
     resetPasswordToken: {
       type: String

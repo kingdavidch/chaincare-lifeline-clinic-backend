@@ -94,11 +94,13 @@ const testSchema = new mongoose_1.Schema({
     homeCollection: {
         type: String,
         lowercase: true,
+        trim: true,
         required: [true, "Home collection information is required"]
     },
     insuranceCoverage: {
         type: String,
         lowercase: true,
+        trim: true,
         required: [true, "Insurance coverage details are required"]
     },
     coveredByLifeLine: {
@@ -107,7 +109,9 @@ const testSchema = new mongoose_1.Schema({
     },
     description: {
         type: String,
-        lowercase: true
+        lowercase: true,
+        trim: true,
+        maxlength: [500, "Description cannot exceed 500 characters"]
     },
     isDeleted: {
         type: Boolean,

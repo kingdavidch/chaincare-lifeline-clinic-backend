@@ -38,7 +38,7 @@ class ReviewController {
                     patient: patientId,
                     clinic: clinicId,
                     paymentStatus: "paid",
-                    "tests.status": { $in: ["result_ready", "sent"] }
+                    "tests.status": { $in: ["result_ready", "sent", "result_sent"] }
                 });
                 if (!existingOrder) {
                     throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Only clinics you've ordered from can be reviewed.");
@@ -119,7 +119,8 @@ class ReviewController {
                     .find({ clinic: clinicId })
                     .populate("patient", "fullName patientId -_id")
                     .select("patient rating comment createdAt")
-                    .sort({ createdAt: -1 });
+                    .sort({ createdAt: -1 })
+                    .limit(10);
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     data: reviews
@@ -155,41 +156,6 @@ class ReviewController {
                         comment: review.comment,
                         createdAt: review.createdAt
                     }
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        });
-    }
-    static deleteAnonymousReviews(req, res, next) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                // 1. Fetch all reviews
-                const allReviews = yield review_model_1.default.find().populate("patient");
-                // 2. Separate reviews by whether patient is null or not
-                const anonymousReviews = allReviews.filter((r) => !r.patient);
-                const patientReviews = allReviews.filter((r) => r.patient);
-                // 3. Collect IDs for both groups
-                const anonymousIds = anonymousReviews.map((r) => r._id);
-                const patientIds = patientReviews.map((r) => r.patient);
-                if (!anonymousIds.length && !patientIds.length) {
-                    return res.status(http_status_1.default.OK).json({
-                        success: true,
-                        message: "No reviews found to clean up."
-                    });
-                }
-                // 4. Delete anonymous reviews
-                const deleteResult = yield review_model_1.default.deleteMany({
-                    _id: { $in: anonymousIds }
-                });
-                // 5. Clean up Clinic references
-                const updateResult = yield clinic_model_1.default.updateMany({ reviews: { $in: anonymousIds } }, { $pull: { reviews: { $in: anonymousIds } } });
-                res.status(http_status_1.default.OK).json({
-                    success: true,
-                    message: `Deleted ${deleteResult.deletedCount} anonymous reviews and removed references from ${updateResult.modifiedCount} clinics.`,
-                    deletedIds: anonymousIds,
-                    patientRefsFound: patientIds // so you can inspect patient-linked reviews
                 });
             }
             catch (error) {

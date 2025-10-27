@@ -22,23 +22,16 @@ const testBooking_model_1 = __importDefault(require("./testBooking.model"));
 const moment_timezone_1 = __importDefault(require("moment-timezone"));
 const timezoneMap_1 = require("../utils/timezoneMap");
 const discount_service_1 = require("../services/discount.service");
+const order_model_1 = __importDefault(require("../order/order.model"));
+const availability_model_1 = require("../availability/availability.model");
 class TestBookingController {
     static addToCart(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 const patientId = (0, utils_1.getPatientId)(req);
-                const { testId, clinicId, individuals, date, time } = req.body;
-                (0, utils_1.handleRequiredFields)(req, [
-                    "testId",
-                    "clinicId",
-                    "individuals",
-                    "date"
-                    // "time"
-                ]);
-                if (!Number.isInteger(individuals) || individuals < 1) {
-                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid quantity.");
-                }
-                const clinic = yield clinic_model_1.default.findById(clinicId);
+                const { testId, clinicId, date, time } = req.body;
+                (0, utils_1.handleRequiredFields)(req, ["testId", "clinicId", "date", "time"]);
+                const clinic = yield clinic_model_1.default.findOne({ clinicId });
                 if (!clinic)
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
                 const test = yield test_model_1.default.findById(testId);
@@ -47,34 +40,103 @@ class TestBookingController {
                 const existingCartItem = yield testBooking_model_1.default.findOne({
                     patient: patientId,
                     test: testId,
-                    clinic: clinicId,
+                    clinic: clinic._id,
                     status: "pending"
                 });
                 if (existingCartItem) {
                     return res.status(http_status_1.default.BAD_REQUEST).json({
                         success: false,
-                        message: "Appointment is already in your cart. You can increase the quantity."
+                        message: "This appointment is already in your cart."
                     });
                 }
                 const timezone = (0, timezoneMap_1.getTimezoneForCountry)(clinic.country);
                 const scheduledAt = moment_timezone_1.default
-                    .tz(`${date} ${time}`, "YYYY-MM-DD HH:mm", timezone)
+                    .tz(`${date} ${time}`, "YYYY-MM-DD hhA", timezone)
                     .toDate();
-                const conflict = yield testBooking_model_1.default.findOne({
-                    clinic: clinicId,
-                    scheduledAt,
-                    status: { $in: ["pending", "booked"] }
+                const dayOfWeek = (0, moment_timezone_1.default)(scheduledAt)
+                    .tz(timezone)
+                    .format("dddd")
+                    .toLowerCase();
+                const availability = yield availability_model_1.AvailabilityModel.findOne({
+                    clinic: clinic._id,
+                    day: dayOfWeek
                 });
-                if (conflict) {
+                if (!availability) {
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, `Clinic is not available on ${dayOfWeek}`);
+                }
+                if (availability.isClosed) {
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, "Clinic is closed on this day");
+                }
+                // --- Parse time string like "12PM", "1PM" into 24-hour number ---
+                const parseTimeToHour = (t) => {
+                    const match = t.match(/(\d+)(AM|PM)/);
+                    if (!match)
+                        throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid time format");
+                    let hour = parseInt(match[1], 10);
+                    const period = match[2];
+                    if (period === "PM" && hour !== 12)
+                        hour += 12;
+                    if (period === "AM" && hour === 12)
+                        hour = 0;
+                    return hour;
+                };
+                let requestedStartHour;
+                let requestedEndHour = null;
+                if (time.includes("-")) {
+                    const [start, end] = time
+                        .split("-")
+                        .map((t) => parseTimeToHour(t.trim()));
+                    requestedStartHour = start;
+                    requestedEndHour = end;
+                }
+                else {
+                    requestedStartHour = parseTimeToHour(time);
+                }
+                const isWithinRange = availability.timeRanges.some((range) => {
+                    if (requestedEndHour !== null) {
+                        return (requestedStartHour >= range.openHour &&
+                            requestedEndHour <= range.closeHour);
+                    }
+                    else {
+                        return (requestedStartHour >= range.openHour &&
+                            requestedStartHour < range.closeHour);
+                    }
+                });
+                if (!isWithinRange) {
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, `Clinic is not available at ${time} on ${dayOfWeek}`);
+                }
+                const startOfDay = moment_timezone_1.default
+                    .tz(scheduledAt, timezone)
+                    .startOf("day")
+                    .toDate();
+                const endOfDay = moment_timezone_1.default.tz(scheduledAt, timezone).endOf("day").toDate();
+                const [authBookings, publicOrders] = yield Promise.all([
+                    testBooking_model_1.default.find({
+                        clinic: clinic._id,
+                        scheduledAt: { $gte: startOfDay, $lte: endOfDay },
+                        status: { $in: ["pending", "booked"] }
+                    }),
+                    order_model_1.default.find({
+                        clinic: clinic._id,
+                        "tests.scheduledAt": { $gte: startOfDay, $lte: endOfDay },
+                        "tests.status": { $in: ["pending", "booked"] }
+                    })
+                ]);
+                const bookedTimes = new Set();
+                authBookings.forEach((b) => bookedTimes.add((0, moment_timezone_1.default)(b.scheduledAt).format("hhA")));
+                publicOrders.forEach((o) => o.tests.forEach((t) => {
+                    if (t.scheduledAt)
+                        bookedTimes.add((0, moment_timezone_1.default)(t.scheduledAt).format("hhA"));
+                }));
+                const requestedSlot = (0, moment_timezone_1.default)(scheduledAt).format("hhA");
+                if (bookedTimes.has(requestedSlot)) {
                     throw new app_error_1.default(http_status_1.default.CONFLICT, "This time slot is already booked. Please choose another.");
                 }
                 const testLocation = test.homeCollection === "available" ? "home" : "on-site";
-                const subtotal = test.price * individuals;
                 const booking = yield testBooking_model_1.default.create({
                     patient: patientId,
                     clinic: clinic._id,
                     test: test._id,
-                    individuals,
                     price: test.price,
                     status: "pending",
                     testLocation,
@@ -85,7 +147,7 @@ class TestBookingController {
                         code: null,
                         percentage: 0,
                         discountAmount: 0,
-                        finalPrice: subtotal,
+                        finalPrice: test.price,
                         expiresAt: null
                     }
                 });
@@ -136,12 +198,11 @@ class TestBookingController {
                         scheduledAt: item.scheduledAt,
                         price: test.price,
                         currencySymbol: test.currencySymbol,
-                        individuals: item.individuals,
                         discount: {
                             code: (_c = (_b = item.discount) === null || _b === void 0 ? void 0 : _b.code) !== null && _c !== void 0 ? _c : null,
                             percentage: (_e = (_d = item.discount) === null || _d === void 0 ? void 0 : _d.percentage) !== null && _e !== void 0 ? _e : 0,
                             discountAmount: (_g = (_f = item.discount) === null || _f === void 0 ? void 0 : _f.discountAmount) !== null && _g !== void 0 ? _g : 0,
-                            finalPrice: (_j = (_h = item.discount) === null || _h === void 0 ? void 0 : _h.finalPrice) !== null && _j !== void 0 ? _j : test.price * item.individuals
+                            finalPrice: (_j = (_h = item.discount) === null || _h === void 0 ? void 0 : _h.finalPrice) !== null && _j !== void 0 ? _j : test.price
                         }
                     };
                 })));
@@ -184,46 +245,6 @@ class TestBookingController {
             }
         });
     }
-    static updateQuantity(req, res, next) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                const patientId = (0, utils_1.getPatientId)(req);
-                const { bookingId } = req.params;
-                const { action } = req.body;
-                if (!["increase", "decrease"].includes(action)) {
-                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid action. Use 'increase' or 'decrease'.");
-                }
-                const booking = yield testBooking_model_1.default.findOne({
-                    _id: bookingId,
-                    patient: patientId,
-                    status: "pending"
-                });
-                if (!booking)
-                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Item not found in cart.");
-                if (action === "increase") {
-                    booking.individuals += 1;
-                }
-                else {
-                    if (booking.individuals <= 1) {
-                        throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Cannot have less than 1 individual.");
-                    }
-                    booking.individuals -= 1;
-                }
-                yield (0, discount_service_1.revalidateDiscount)(booking);
-                res.status(http_status_1.default.OK).json({
-                    success: true,
-                    message: `Quantity ${action}d successfully.`,
-                    data: {
-                        individuals: booking.individuals,
-                        discount: booking.discount
-                    }
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        });
-    }
     static clearCart(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
@@ -238,42 +259,6 @@ class TestBookingController {
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Cart cleared successfully."
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        });
-    }
-    static getAvailableSlots(req, res, next) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                const { clinicId } = req.params;
-                const { date } = req.query;
-                if (!date)
-                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Date is required");
-                const clinic = yield clinic_model_1.default.findById(clinicId);
-                if (!clinic)
-                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found");
-                const openHour = 9;
-                const closeHour = 17; // inclusive (9 → 17)
-                const timezone = (0, timezoneMap_1.getTimezoneForCountry)(clinic.country);
-                const slots = [];
-                for (let hour = openHour; hour <= closeHour; hour++) {
-                    const slot = moment_timezone_1.default.tz(`${date} ${hour}:00`, "YYYY-MM-DD HH:mm", timezone);
-                    const conflict = yield testBooking_model_1.default.findOne({
-                        clinic: clinicId,
-                        scheduledAt: slot.toDate(),
-                        status: "booked"
-                    });
-                    if (!conflict) {
-                        slots.push(`${String(hour).padStart(2, "0")}:00`);
-                    }
-                }
-                res.status(http_status_1.default.OK).json({
-                    success: true,
-                    message: "Available slots retrieved successfully",
-                    slots
                 });
             }
             catch (error) {

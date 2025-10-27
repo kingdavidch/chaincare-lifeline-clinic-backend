@@ -11,7 +11,6 @@ const clinic_middleware_1 = __importDefault(require("../clinic/clinic.middleware
 const reviewRouter = express_1.default.Router();
 reviewRouter.post("/patient", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(review_controller_1.default.createClinicReview));
 reviewRouter.patch("/patient/:reviewId", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(review_controller_1.default.updateClinicReview));
-reviewRouter.get("/", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(review_controller_1.default.deleteAnonymousReviews));
 reviewRouter.get("/patient/:reviewId", patient_middleware_1.default.authenticate, (0, async_handler_1.default)(review_controller_1.default.getPatientReviewById));
 reviewRouter.get("/clinic", clinic_middleware_1.default.authenticate, (0, async_handler_1.default)(review_controller_1.default.getClinicReviews));
 exports.default = reviewRouter;

@@ -250,4 +250,31 @@ adminRouter.delete(
   asyncHandler(AdminController.clearAdminNotifications)
 )
 
+// Create a new practitioner category
+adminRouter.post(
+  "/practitioner-categories",
+  AdminMiddleware.authenticate,
+  asyncHandler(AdminController.createPractitionerCategory)
+)
+
+// Update an existing practitioner category
+adminRouter.put(
+  "/practitioner-categories/:id",
+  AdminMiddleware.authenticate,
+  asyncHandler(AdminController.updatePractitionerCategory)
+)
+
+// Delete a practitioner category
+adminRouter.delete(
+  "/practitioner-categories/:id",
+  AdminMiddleware.authenticate,
+  asyncHandler(AdminController.deletePractitionerCategory)
+)
+
+adminRouter.get(
+  "/practitioner-categories",
+  AdminMiddleware.authenticate,
+  asyncHandler(AdminController.getAllCategoriesForAdmin)
+)
+
 export default adminRouter

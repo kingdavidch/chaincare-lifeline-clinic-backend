@@ -6,8 +6,6 @@ import httpStatus from "http-status"
 import mongoose from "mongoose"
 import { v4 as uuidv4 } from "uuid"
 import { io } from ".."
-import adminModel from "../admin/admin.model"
-import adminNotificationModel from "../admin/admin.notification.model"
 import clinicModel from "../clinic/clinic.model"
 import clinicNotificationModel from "../clinic/clinic.notification.model"
 import { IClinic } from "../clinic/clinic.types"
@@ -23,6 +21,7 @@ import {
   generateOrderID,
   getClinicId,
   getPatientId,
+  handleRequiredFields,
   validatePhoneWithPawaPay
 } from "../utils"
 import AppError from "../utils/app.error"
@@ -32,12 +31,19 @@ import {
   formatCase,
   isPopulatedTest,
   mapDeliveryMethod,
-  deliveryMethodToNumber
+  deliveryMethodToNumber,
+  formatTestStatus,
+  createCalendarEventsForOrder,
+  parseTimeToHour
 } from "./utils"
-import { IOrder } from "./order.types"
 import moment from "moment-timezone"
 import { getTimezoneForCountry } from "../utils/timezoneMap"
 import { revalidateDiscount } from "../services/discount.service"
+import { notifyAdmin } from "../admin/utils"
+import { IPatient } from "../patient/patient.types"
+import discountModel from "../discount/discount.model"
+import { AvailabilityModel } from "../availability/availability.model"
+import { PendingPublicOrder } from "./pendingpublicorder.model"
 
 export default class OrderController {
   /**
@@ -45,8 +51,7 @@ export default class OrderController {
    */
   public static async checkout(
     req: Request,
-    res: Response,
-    next: NextFunction
+    res: Response
   ): Promise<Response | void> {
     try {
       const patientId = getPatientId(req)
@@ -113,7 +118,7 @@ export default class OrderController {
           )?.image || ""
 
         const basePrice = testData?.price ?? 0
-        const subtotal = basePrice * item.individuals
+        const subtotal = basePrice
         const finalPrice =
           item.discount?.finalPrice && item.discount.finalPrice > 0
             ? item.discount.finalPrice
@@ -122,7 +127,6 @@ export default class OrderController {
         const preparedTest = {
           test: item.test,
           testName: testData?.testName ?? "Unknown Test",
-          individuals: item.individuals,
           price: basePrice,
           turnaroundTime: testData?.turnaroundTime ?? "N/A",
           description: testData?.description ?? "N/A",
@@ -155,7 +159,31 @@ export default class OrderController {
       const clinicIds = Object.keys(groupedByClinic)
       const clinics = await clinicModel
         .find({ _id: { $in: clinicIds } })
-        .select("onlineStatus clinicName")
+        .select("onlineStatus clinicName deliveryMethods")
+
+      const selectedDelivery = deliveryMethodToNumber(deliveryMethod)
+
+      const unsupportedDelivery = clinics.find(
+        (clinic) => !clinic.deliveryMethods?.includes(selectedDelivery)
+      )
+
+      if (unsupportedDelivery) {
+        const deliveryMap: Record<number, string> = {
+          0: "Home Service",
+          1: "In-Person",
+          2: "Online"
+        }
+
+        const supportedMethods =
+          (unsupportedDelivery.deliveryMethods || [])
+            .map((m) => deliveryMap[m])
+            .join(", ") || "none"
+
+        throw new AppError(
+          httpStatus.FORBIDDEN,
+          `Clinic "${unsupportedDelivery.clinicName?.toUpperCase()}" does not support the selected delivery method. Supported methods: ${supportedMethods}.`
+        )
+      }
 
       const offlineClinic = clinics.find(
         (clinic) => clinic.onlineStatus === "offline"
@@ -207,30 +235,17 @@ export default class OrderController {
             metadata: [
               {
                 fieldName: "patientId",
-                fieldValue: patientId?.slice(0, 64) || ""
+                fieldValue: patientId?.toString()
               },
               { fieldName: "service", fieldValue: "clinic" },
               {
                 fieldName: "callbackUrl",
                 fieldValue: `${process.env.BACKEND_URL}/api/v1/payment/p/d-w`
               },
-              { fieldName: "orderId", fieldValue: orderId.slice(0, 64) },
-              {
-                fieldName: "phoneNumber",
-                fieldValue: phoneNumber.slice(0, 64)
-              },
               { fieldName: "paymentMethod", fieldValue: "pawa_pay" },
-              {
-                fieldName: "totalAmount",
-                fieldValue: allClinicTotals.toString().slice(0, 64)
-              },
               {
                 fieldName: "deliveryMethod",
                 fieldValue: String(deliveryMethod)
-              },
-              {
-                fieldName: "deliveryAddress",
-                fieldValue: JSON.stringify(deliveryAddress).slice(0, 64)
               }
             ]
           }
@@ -331,15 +346,18 @@ export default class OrderController {
 
             const populatedOrder = await orderModel
               .findById(order._id)
-              .populate("clinic")
-              .populate("patient")
-              .lean<IOrder>()
+              .populate<{ clinic: IClinic }>("clinic")
+              .populate<{ patient: IPatient }>("patient")
 
             if (populatedOrder) {
               await OrderSmtpService.sendOrderConfirmationEmail(populatedOrder)
               await OrderSmtpService.sendClinicOrderNotificationEmail(
                 populatedOrder
               )
+            }
+
+            if (populatedOrder) {
+              await createCalendarEventsForOrder(populatedOrder)
             }
 
             await patientNotificationModel.create([
@@ -391,18 +409,11 @@ export default class OrderController {
               }
             ])
 
-            const admin = await adminModel.findOne()
-            if (admin) {
-              await adminNotificationModel.create([
-                {
-                  admin: admin._id,
-                  title: "New Order Placed",
-                  message: `Patient "${patient.fullName}" placed a new order (${orderId}) via insurance`,
-                  type: "order",
-                  isRead: false
-                }
-              ])
-            }
+            await notifyAdmin(
+              "New Order Placed",
+              `Patient "${patient.fullName}" placed a new order (${orderId}) via insurance`,
+              "order"
+            )
 
             allCreatedOrders.push(orderId)
           }
@@ -417,9 +428,26 @@ export default class OrderController {
         default:
           throw new AppError(httpStatus.BAD_REQUEST, "Invalid payment method")
       }
-    } catch (error) {
-      console.log(error)
-      next(error)
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        return res.status(httpStatus.BAD_REQUEST).json({
+          success: false,
+          message: error.response?.data?.rejectionReason || error.message,
+          data: error.response?.data || null
+        })
+      } else if (error instanceof AppError) {
+        return res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
+          success: false,
+          message: error.message,
+          data: null
+        })
+      } else {
+        return res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+          success: false,
+          message: "An unexpected error occurred",
+          data: error.message || null
+        })
+      }
     }
   }
 
@@ -513,7 +541,6 @@ export default class OrderController {
                 testId: testItem.test,
                 testImage,
                 testName: test?.testName,
-                individuals: testItem?.individuals,
                 date: order.createdAt
                   ? moment(order.createdAt)
                       .tz(timezone)
@@ -525,7 +552,7 @@ export default class OrderController {
                 clinicName: clinic?.clinicName,
                 price: testItem?.price,
                 currencySymbol: test?.currencySymbol,
-                status: testItem.status,
+                status: formatTestStatus(testItem.status),
                 statusReason: testItem.statusReason || null,
                 paymentStatus: order.paymentStatus
               }
@@ -602,7 +629,7 @@ export default class OrderController {
       const testResults = await testResultModel
         .find({
           clinic: clinicId,
-          patient: order.patient._id,
+          ...(order.patient ? { patient: order.patient._id } : {}),
           order: order._id,
           test: { $in: order.tests.map((t: any) => t.test) }
         })
@@ -622,7 +649,10 @@ export default class OrderController {
           )?.image ||
           testRef?.image ||
           ""
-        const resultSent = testResultMap.get(testRef._id.toString()) || false
+        const resultSent = order.patient
+          ? testResultMap.get(testRef._id.toString()) || false
+          : false
+
         return {
           _id: testRef._id,
           testName: test.testName,
@@ -634,6 +664,9 @@ export default class OrderController {
           date: moment(test.scheduledAt || test.date).format(
             "YYYY-MM-DD hh:mm A"
           ),
+          scheduledAt: test.scheduledAt || null,
+          googleMeetLink: test.googleMeetLink || null,
+          googleEventLink: test.googleEventLink || null,
           statusReason: test.statusReason || null,
           statusHistory: test.statusHistory || []
         }
@@ -707,7 +740,9 @@ export default class OrderController {
 
       const orders = await orderModel
         .find(filter)
-        .select("orderId patient tests totalAmount createdAt paymentMethod")
+        .select(
+          "orderId patient tests totalAmount createdAt paymentMethod publicBooker isPublicBooking"
+        )
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNumber)
@@ -719,9 +754,12 @@ export default class OrderController {
 
       const formattedOrders = await Promise.all(
         orders.map(async (order) => {
-          const patient = await patientModel
-            .findById(order.patient)
-            .select("fullName")
+          const patient =
+            order.patient &&
+            (await patientModel.findById(order.patient).select("fullName"))
+
+          const CustomerName =
+            patient?.fullName || order?.publicBooker?.fullName || "N/A"
 
           const clinicDoc = await clinicModel
             .findById(clinicId)
@@ -775,7 +813,8 @@ export default class OrderController {
           return {
             id: order?._id,
             orderId: order?.orderId,
-            CustomerName: patient?.fullName || "N/A",
+            CustomerName,
+            isPublicBooking: order?.isPublicBooking,
             Test: testNames,
             Date: moment.utc(order.createdAt).tz(timezone).format("DD-MM-YYYY"),
             Time: moment.utc(order.createdAt).tz(timezone).format("hh:mm A"),
@@ -841,7 +880,7 @@ export default class OrderController {
 
       const order = await orderModel
         .findOne({ _id: id, clinic: clinicId })
-        .populate("patient", "fullName email phoneNumber")
+        .populate("patient", "fullName email phoneNumber expoPushToken")
         .populate("clinic", "clinicName location currencySymbol")
 
       if (!order) {
@@ -851,7 +890,6 @@ export default class OrderController {
       const testItem = order.tests.find(
         (t) => t.test.toString() === testId.toString()
       )
-
       if (!testItem) {
         throw new AppError(httpStatus.NOT_FOUND, "Test not found in order.")
       }
@@ -878,10 +916,9 @@ export default class OrderController {
         if (disallowedStates.includes(testItem.status)) {
           throw new AppError(
             httpStatus.BAD_REQUEST,
-            "Cannot cancel a test that is already completed or result has been sent."
+            "Cannot cancel a completed test."
           )
         }
-
         if (order.paymentMethod === "insurance" && !statusReason) {
           throw new AppError(
             httpStatus.BAD_REQUEST,
@@ -890,80 +927,32 @@ export default class OrderController {
         }
       }
 
-      const statusFlow = [
-        "pending",
-        "sample_collected",
-        "processing",
-        "result_ready",
-        "result_sent"
-      ]
-
-      const currentStatus = testItem.status
-      const currentIndex = statusFlow.indexOf(currentStatus)
-      const finalIndex = statusFlow.indexOf(status)
-
-      const statusesToFill =
-        currentIndex === -1
-          ? statusFlow.slice(0, finalIndex + 1)
-          : statusFlow.slice(currentIndex + 1, finalIndex + 1)
-
       const now = new Date()
-
-      const historyEntries: {
-        status:
-          | "pending"
-          | "sample_collected"
-          | "processing"
-          | "result_ready"
-          | "result_sent"
-          | "rejected"
-          | "cancelled"
-          | "failed"
-        changedAt: Date
-      }[] = statusesToFill.map((s) => ({
-        status: s as
-          | "pending"
-          | "sample_collected"
-          | "processing"
-          | "result_ready"
-          | "result_sent"
-          | "rejected"
-          | "cancelled"
-          | "failed",
-        changedAt: now
-      }))
-
       testItem.status = status
       testItem.statusReason = requiresReason ? statusReason : null
-
-      if (!Array.isArray(testItem.statusHistory)) {
-        testItem.statusHistory = []
-      }
-
-      testItem.statusHistory.push(...historyEntries)
+      testItem.statusHistory = [
+        ...(testItem.statusHistory || []),
+        { status, changedAt: now }
+      ]
 
       await order.save()
 
-      const patient = await patientModel
-        .findById(order.patient._id)
-        .select("fullName email phoneNumber expoPushToken")
-      const clinic = await clinicModel
-        .findById(clinicId)
-        .select("clinicName location currencySymbol")
-      const admin = await adminModel.findOne()
+      const clinic = order.clinic as IClinic
+      const patient = order.patient as IPatient | undefined
+      const isPublic = order.isPublicBooking || !!order.publicBooker
 
-      if (patient && clinic) {
-        try {
-          await OrderSmtpService.sendOrderStatusUpdateEmail(
-            order,
-            testItem,
-            clinic,
-            patient
-          )
-        } catch (emailErr) {
-          console.error("Failed to send status update email:", emailErr)
-        }
+      try {
+        await OrderSmtpService.sendOrderStatusUpdateEmail(
+          order,
+          testItem,
+          clinic,
+          patient
+        )
+      } catch (emailErr) {
+        console.error("Failed to send status update email:", emailErr)
+      }
 
+      if (!isPublic && patient) {
         await patientNotificationModel.create({
           patient: patient._id,
           title: "Test Status Updated",
@@ -983,7 +972,10 @@ export default class OrderController {
             title: `${formatCase(testItem.testName)} Test • Status Updated`,
             message: `Your "${formatCase(
               testItem.testName
-            )}" test is now "${status.replace(/_/g, " ")}". Tap to view details.`,
+            )}" test is now "${status.replace(
+              /_/g,
+              " "
+            )}". Tap to view details.`,
             type: "order",
             data: {
               screen: "OrderDetails",
@@ -992,34 +984,28 @@ export default class OrderController {
             }
           })
         }
-
-        if (admin) {
-          await adminNotificationModel.create({
-            admin: admin._id,
-            title: "Test Status Updated by Clinic",
-            message: `The clinic "${
-              clinic.clinicName
-            }" has updated the status of test "${formatCase(
-              testItem.testName
-            )}" in order ${order.orderId} to "${status.replace(/_/g, " ")}".`,
-            type: "order",
-            isRead: false
-          })
-        }
-
-        await clinicNotificationModel.create({
-          clinic: clinic._id,
-          title: "Test Status Updated",
-          message: `Status of test "${formatCase(
-            testItem.testName
-          )}" in order ${order.orderId} has been updated to "${status.replace(
-            /_/g,
-            " "
-          )}".`,
-          type: "order",
-          isRead: false
-        })
       }
+
+      await notifyAdmin(
+        "Test Status Updated by Clinic",
+        `The clinic "${clinic.clinicName}" updated "${formatCase(
+          testItem.testName
+        )}" in order ${order.orderId} to "${status.replace(/_/g, " ")}".`,
+        "order"
+      )
+
+      await clinicNotificationModel.create({
+        clinic: clinic._id,
+        title: "Test Status Updated",
+        message: `Status of "${formatCase(
+          testItem.testName
+        )}" in order ${order.orderId} updated to "${status.replace(
+          /_/g,
+          " "
+        )}".`,
+        type: "order",
+        isRead: false
+      })
 
       io.emit("orderTestStatus:update", {
         clinicId,
@@ -1028,17 +1014,19 @@ export default class OrderController {
         status: testItem.status,
         statusReason: testItem.statusReason,
         statusHistory: testItem.statusHistory,
-        patient: {
-          _id: patient?._id,
-          fullName: patient?.fullName,
-          email: patient?.email,
-          phoneNumber: patient?.phoneNumber
-        },
+        patient: !isPublic
+          ? {
+              _id: patient?._id,
+              fullName: patient?.fullName,
+              email: patient?.email,
+              phoneNumber: patient?.phoneNumber
+            }
+          : null,
         clinic: {
-          _id: clinic?._id,
-          clinicName: clinic?.clinicName,
-          location: clinic?.location,
-          currencySymbol: clinic?.currencySymbol
+          _id: clinic._id,
+          clinicName: clinic.clinicName,
+          location: clinic.location,
+          currencySymbol: clinic.currencySymbol
         }
       })
 
@@ -1322,7 +1310,6 @@ export default class OrderController {
           testImage: testItem.testImage,
           price: testItem.price,
           currencySymbol: testRef?.currencySymbol,
-          individuals: testItem.individuals,
           turnaroundTime: testRef?.turnaroundTime || testItem.turnaroundTime,
           description: testRef?.description || testItem.description,
           status: testItem.status,
@@ -1423,6 +1410,308 @@ export default class OrderController {
       })
     } catch (error) {
       next(error)
+    }
+  }
+
+  public static async checkoutPublic(
+    req: Request,
+    res: Response
+  ): Promise<Response | void> {
+    try {
+      handleRequiredFields(req, [
+        "clinicId",
+        "testNo",
+        "paymentMethod",
+        "phoneNumber",
+        "fullName",
+        "email",
+        "deliveryMethod",
+        "date",
+        "time"
+      ])
+
+      const {
+        clinicId,
+        testNo,
+        paymentMethod,
+        phoneNumber,
+        fullName,
+        email,
+        discountCode,
+        deliveryMethod,
+        deliveryAddress,
+        date,
+        time
+      } = req.body
+
+      const clinic = await clinicModel.findOne({ clinicId })
+      if (!clinic) throw new AppError(httpStatus.NOT_FOUND, "Clinic not found.")
+
+      const testDoc = await testModel
+        .findOne({ testNo: testNo, isDeleted: false })
+        .select("testName price turnaroundTime description testImage")
+      if (!testDoc)
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid test selected.")
+
+      const timezone = getTimezoneForCountry(clinic.country)
+      const scheduledAt = moment
+        .tz(`${date} ${time}`, "YYYY-MM-DD HH:mm", timezone)
+        .toDate()
+
+      const startOfDay = moment
+        .tz(scheduledAt, timezone)
+        .startOf("day")
+        .toDate()
+      const endOfDay = moment.tz(scheduledAt, timezone).endOf("day").toDate()
+
+      const dayOfWeek = moment
+        .tz(date, "YYYY-MM-DD", timezone)
+        .format("dddd")
+        .toLowerCase()
+
+      const availability = await AvailabilityModel.findOne({
+        clinic: clinic._id,
+        day: dayOfWeek
+      })
+
+      if (!availability)
+        throw new AppError(
+          httpStatus.CONFLICT,
+          "Clinic is not available on this day"
+        )
+      if (availability.isClosed)
+        throw new AppError(httpStatus.CONFLICT, "Clinic is closed on this day")
+
+      let requestedStartHour: number
+      let requestedEndHour: number | null = null
+
+      if (time.includes("-")) {
+        const [start, end] = time
+          .split("-")
+          .map((t: string) => parseTimeToHour(t.trim()))
+        requestedStartHour = start
+        requestedEndHour = end
+      } else {
+        requestedStartHour = Number(time.split(":")[0])
+      }
+
+      const isWithinRange = availability.timeRanges.some((range) => {
+        if (requestedEndHour !== null) {
+          return (
+            requestedStartHour >= range.openHour &&
+            requestedEndHour <= range.closeHour
+          )
+        } else {
+          return (
+            requestedStartHour >= range.openHour &&
+            requestedStartHour < range.closeHour
+          )
+        }
+      })
+
+      if (!isWithinRange) {
+        throw new AppError(
+          httpStatus.CONFLICT,
+          `Clinic is not available at ${time} on ${dayOfWeek}`
+        )
+      }
+
+      const [authBookings, publicOrders] = await Promise.all([
+        testBookingModel.find({
+          clinic: clinic._id,
+          scheduledAt: { $gte: startOfDay, $lte: endOfDay },
+          status: { $in: ["pending", "booked"] }
+        }),
+        orderModel.find({
+          clinic: clinic._id,
+          "tests.scheduledAt": { $gte: startOfDay, $lte: endOfDay },
+          "tests.status": { $in: ["pending", "booked"] }
+        })
+      ])
+
+      const bookedTimes = new Set<string>()
+      authBookings.forEach((b) =>
+        bookedTimes.add(moment(b.scheduledAt).format("HH:mm"))
+      )
+      publicOrders.forEach((o) =>
+        o.tests.forEach((t) => {
+          if (t.scheduledAt)
+            bookedTimes.add(moment(t.scheduledAt).format("HH:mm"))
+        })
+      )
+
+      const requestedSlot = moment(scheduledAt).format("HH:mm")
+      if (bookedTimes.has(requestedSlot))
+        throw new AppError(
+          httpStatus.CONFLICT,
+          "This time slot is already booked. Please choose another."
+        )
+
+      let validatedDeliveryAddress: Record<string, any> | null = null
+      if (deliveryMethod === 0) {
+        handleRequiredFields(req, [
+          "deliveryAddress.address",
+          "deliveryAddress.cityOrDistrict",
+          "deliveryAddress.phoneNo"
+        ])
+
+        validatedDeliveryAddress = {
+          fullName,
+          phoneNo: deliveryAddress.phoneNo,
+          address: deliveryAddress.address,
+          cityOrDistrict: deliveryAddress.cityOrDistrict
+        }
+      } else if (![1, 2].includes(deliveryMethod)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid delivery method.")
+      }
+
+      let finalAmount = testDoc.price
+      let appliedDiscount = undefined
+
+      if (discountCode) {
+        const now = moment.utc()
+        const normalized = discountCode.toUpperCase()
+
+        const discount = await discountModel.findOne({
+          clinic: clinic._id,
+          code: normalized,
+          status: 0,
+          isDeleted: false,
+          validUntil: { $gte: now.toDate() }
+        })
+
+        if (!discount)
+          throw new AppError(httpStatus.BAD_REQUEST, "Invalid discount code.")
+
+        const discountAmount = (testDoc.price * discount.percentage) / 100
+        finalAmount = testDoc.price - discountAmount
+
+        appliedDiscount = {
+          code: discount.code,
+          percentage: discount.percentage,
+          discountAmount,
+          expiresAt: discount.validUntil
+        }
+      }
+
+      const selectedDelivery = deliveryMethodToNumber(deliveryMethod)
+
+      if (
+        !clinic.deliveryMethods ||
+        clinic.deliveryMethods.length === 0 ||
+        !clinic.deliveryMethods.includes(selectedDelivery)
+      ) {
+        const supported =
+          clinic.deliveryMethods
+            ?.map((m) => {
+              if (m === 0) return "Home service"
+              if (m === 1) return "In-person"
+              if (m === 2) return "Online session"
+            })
+            .join(", ") || "none"
+
+        throw new AppError(
+          httpStatus.FORBIDDEN,
+          `Clinic "${clinic.clinicName?.toUpperCase()}" does not support this delivery method. Supported methods: ${supported}`
+        )
+      }
+
+      if (paymentMethod.toLowerCase() !== "pawa_pay")
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid payment method.")
+
+      const prediction = await validatePhoneWithPawaPay(phoneNumber)
+      const predictedProvider = prediction.provider
+
+      const depositId = uuidv4()
+      const amountToSend = Math.round(finalAmount).toString()
+
+      const depositPayload = {
+        depositId,
+        amount: amountToSend,
+        currency: "RWF",
+        country: "RWA",
+        correspondent: predictedProvider,
+        payer: { type: "MSISDN", address: { value: phoneNumber } },
+        customerTimestamp: new Date().toISOString(),
+        statementDescription: "PawaPay Payment",
+        metadata: [
+          { fieldName: "service", fieldValue: "clinic" },
+          {
+            fieldName: "callbackUrl",
+            fieldValue: `${process.env.BACKEND_URL}/api/v1/payment/p/d-w`
+          },
+          { fieldName: "paymentOrigin", fieldValue: "public" },
+          { fieldName: "orderKey", fieldValue: depositId }
+        ]
+      }
+
+      const response = await axios.post(
+        `${process.env.PAWAPAY_API_URL}/deposits`,
+        depositPayload,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAWAPAY_API_TOKEN}`,
+            "Content-Type": "application/json"
+          },
+          timeout: 10000
+        }
+      )
+
+      if (response.data.status !== "ACCEPTED")
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          response?.data?.rejectionReason || "Payment not accepted"
+        )
+
+      await PendingPublicOrder.create({
+        orderKey: depositId,
+        clinicId,
+        testNo,
+        fullName,
+        email,
+        phoneNumber,
+        deliveryMethod,
+        deliveryAddress: validatedDeliveryAddress,
+        appliedDiscount: appliedDiscount ?? undefined,
+        scheduledAt
+      })
+
+      return res.status(httpStatus.CREATED).json({
+        success: true,
+        message:
+          "Payment initiated via PawaPay. Order will be created once payment is confirmed.",
+        data: {
+          transactionId: response.data.depositId,
+          phoneNumber,
+          email,
+          amount: parseInt(amountToSend),
+          finalAmount,
+          discount: appliedDiscount,
+          deliveryMethod,
+          deliveryAddress: deliveryAddress,
+          scheduledAt
+        }
+      })
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        return res.status(httpStatus.BAD_REQUEST).json({
+          success: false,
+          message: error.response?.data?.rejectionReason || error.message,
+          data: error.response?.data || null
+        })
+      } else if (error instanceof AppError) {
+        return res.status(error.statusCode || httpStatus.BAD_REQUEST).json({
+          success: false,
+          message: error.message,
+          data: null
+        })
+      } else {
+        return res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+          success: false,
+          message: "An unexpected error occurred",
+          data: error.message || null
+        })
+      }
     }
   }
 }

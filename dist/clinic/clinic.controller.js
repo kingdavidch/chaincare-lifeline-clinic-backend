@@ -22,9 +22,6 @@ const moment_1 = __importDefault(require("moment"));
 const mongoose_1 = __importDefault(require("mongoose"));
 const uuid_1 = require("uuid");
 const __1 = require("..");
-const admin_model_1 = __importDefault(require("../admin/admin.model"));
-const admin_notification_model_1 = __importDefault(require("../admin/admin.notification.model"));
-const constant_1 = require("../constant");
 const order_model_1 = __importDefault(require("../order/order.model"));
 const patient_model_1 = __importDefault(require("../patient/patient.model"));
 const payment_service_1 = require("../payment/payment.service");
@@ -38,6 +35,12 @@ const app_error_1 = __importDefault(require("../utils/app.error"));
 const password_utils_1 = require("../utils/password.utils");
 const clinic_model_1 = __importDefault(require("./clinic.model"));
 const clinic_notification_model_1 = __importDefault(require("./clinic.notification.model"));
+const utils_2 = require("../admin/utils");
+const test_item_model_1 = __importDefault(require("../test/test.item.model"));
+const world_countries_1 = __importDefault(require("world-countries"));
+const currency_symbol_map_1 = __importDefault(require("currency-symbol-map"));
+const discount_model_1 = __importDefault(require("../discount/discount.model"));
+const practitionercategory_model_1 = __importDefault(require("./practitionercategory.model"));
 class ClinicController {
     static signup(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -56,20 +59,26 @@ class ClinicController {
                     "termsAccepted"
                 ]);
                 const { clinicName, email, phoneNo, stateOrProvince, cityOrDistrict, street, postalCode, coordinates, password, termsAccepted, country } = req.body;
-                // Get currency symbol based on country
-                const countryData = constant_1.COUNTRIES === null || constant_1.COUNTRIES === void 0 ? void 0 : constant_1.COUNTRIES.find((c) => c.value.toLowerCase() === country.toLowerCase());
-                const currencySymbol = countryData ? countryData.currencySymbol : "";
-                // Check if the email already exists in either patients or clinics
+                const matchedCountry = world_countries_1.default.find((c) => c.name.common.toLowerCase() === country.toLowerCase());
+                const currencyCode = matchedCountry
+                    ? Object.keys(matchedCountry.currencies || {})[0]
+                    : "RWF";
+                const currencySymbol = (0, currency_symbol_map_1.default)(currencyCode) || "$";
                 const existingPatientByEmail = yield patient_model_1.default.findOne({ email });
                 const existingClinicByEmail = yield clinic_model_1.default.findOne({ email });
                 if (existingPatientByEmail || existingClinicByEmail) {
                     throw new app_error_1.default(http_status_1.default.CONFLICT, "An account with this email already exists.");
                 }
-                // Check if the phone number already exists in clinics
-                const existingPhone = yield patient_model_1.default.findOne({ phoneNo });
+                const existingPatientPhone = yield patient_model_1.default.findOne({ phoneNo });
                 const existingClinicPhone = yield clinic_model_1.default.findOne({ phoneNo });
-                if (existingPhone || existingClinicPhone) {
+                if (existingPatientPhone || existingClinicPhone) {
                     throw new app_error_1.default(http_status_1.default.CONFLICT, "Phone number is already in use.");
+                }
+                const existingClinicName = yield clinic_model_1.default.findOne({
+                    clinicName: { $regex: new RegExp(`^${clinicName}$`, "i") }
+                });
+                if (existingClinicName) {
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, "A clinic with this name already exists.");
                 }
                 if (!termsAccepted) {
                     throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "You must accept the terms and policies.");
@@ -87,6 +96,16 @@ class ClinicController {
                         }
                         : { latitude: null, longitude: null }
                 };
+                const formattedUsername = clinicName
+                    .toLowerCase()
+                    .trim()
+                    .replace(/\s+/g, "_");
+                const existingUsername = yield clinic_model_1.default.findOne({
+                    username: formattedUsername
+                });
+                if (existingUsername) {
+                    throw new app_error_1.default(http_status_1.default.CONFLICT, "Clinic name already in use, please choose another.");
+                }
                 const newClinic = new clinic_model_1.default({
                     clinicName,
                     email,
@@ -95,26 +114,14 @@ class ClinicController {
                     password: hashedPassword,
                     termsAccepted,
                     country,
-                    currencySymbol
+                    currencySymbol,
+                    username: formattedUsername
                 });
                 yield newClinic.save();
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create({
-                        admin: admin._id,
-                        title: "New Clinic Registration",
-                        message: `Clinic "${clinicName}" has just signed up and is awaiting approval.`,
-                        type: "info",
-                        isRead: false
-                    });
-                }
+                yield (0, utils_2.notifyAdmin)("New Clinic Registration", `Clinic "${clinicName}" has just signed up and is awaiting approval.`, "info");
                 yield smtp_clinic_service_1.default.sendClinicVerificationEmail(newClinic)
-                    .then(() => {
-                    console.log("Verification email sent successfully.");
-                })
-                    .catch((error) => {
-                    console.error("Error sending verification email:", error);
-                });
+                    .then(() => console.log("Verification email sent successfully."))
+                    .catch((error) => console.error("Error sending verification email:", error));
                 res.status(http_status_1.default.CREATED).json({
                     success: true,
                     message: "Registration successful. Please verify your email.",
@@ -349,7 +356,8 @@ class ClinicController {
                     .select("-password -resetPasswordToken -resetPasswordExpires -tests -certificate -termsAccepted")
                     .populate({
                     path: "reviews",
-                    select: "rating comment patient",
+                    select: "rating comment patient createdAt",
+                    options: { sort: { createdAt: -1 }, limit: 10 },
                     populate: {
                         path: "patient",
                         select: "fullName"
@@ -358,10 +366,21 @@ class ClinicController {
                 if (!clinic) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
                 }
+                const discounts = yield discount_model_1.default
+                    .find({
+                    clinic: clinicId,
+                    validUntil: { $gte: new Date() },
+                    status: 0,
+                    isDeleted: false,
+                    isHidden: false
+                })
+                    .select("code percentage validUntil status isHidden createdAt updatedAt discountNo -_id")
+                    .lean();
+                const shareUrl = `${process.env.CLINIC_PUBLIC_URL}/${clinic.username}`;
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Clinic information retrieved successfully.",
-                    data: clinic
+                    data: Object.assign(Object.assign({}, clinic.toObject()), { discounts: discounts || [], shareUrl })
                 });
             }
             catch (error) {
@@ -377,7 +396,7 @@ class ClinicController {
                 if (!clinic) {
                     throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
                 }
-                const { clinicName, bio, email, phoneNo, stateOrProvince, cityOrDistrict, street, postalCode, coordinates, password, country, supportInsurance, onlineStatus, currencySymbol } = req.body;
+                const { clinicName, bio, email, phoneNo, stateOrProvince, cityOrDistrict, street, postalCode, coordinates, password, country, supportInsurance, onlineStatus, languages, deliveryMethods, username, socialMedia, practitionerType } = req.body;
                 let profilePhotoUrl = clinic.avatar;
                 // Check if the email already exists in either patients or clinics
                 if (email) {
@@ -418,6 +437,10 @@ class ClinicController {
                 if (phoneNo) {
                     clinic.phoneNo = phoneNo;
                     updatedFields.push("phoneNo");
+                }
+                if (practitionerType) {
+                    clinic.practitionerType = practitionerType.toLowerCase().trim();
+                    updatedFields.push("practitionerType");
                 }
                 if (bio) {
                     clinic.bio = bio;
@@ -464,19 +487,84 @@ class ClinicController {
                     clinic.supportInsurance = JSON.parse(supportInsurance);
                     updatedFields.push("supportInsurance");
                 }
-                if (currencySymbol) {
-                    clinic.currencySymbol = currencySymbol;
-                    updatedFields.push("currencySymbol");
-                }
                 if (profilePhotoUrl) {
                     clinic.avatar = profilePhotoUrl;
                     updatedFields.push("avatar");
+                }
+                if (languages) {
+                    clinic.languages = JSON.parse(languages);
+                    updatedFields.push("languages");
+                }
+                if (username) {
+                    const formattedUsername = username
+                        .toLowerCase()
+                        .trim()
+                        .replace(/\s+/g, "_");
+                    const existingUsername = yield clinic_model_1.default.findOne({
+                        username: formattedUsername,
+                        _id: { $ne: clinicId }
+                    });
+                    if (existingUsername) {
+                        throw new app_error_1.default(http_status_1.default.CONFLICT, "Username already in use.");
+                    }
+                    clinic.username = formattedUsername;
+                    updatedFields.push("username");
+                }
+                if (deliveryMethods) {
+                    const parsedDelivery = Array.isArray(deliveryMethods)
+                        ? deliveryMethods
+                        : JSON.parse(deliveryMethods);
+                    clinic.deliveryMethods = parsedDelivery;
+                    updatedFields.push("deliveryMethods");
+                }
+                if (socialMedia) {
+                    try {
+                        const parsedSocial = typeof socialMedia === "string"
+                            ? JSON.parse(socialMedia)
+                            : socialMedia;
+                        clinic.socialMedia = parsedSocial;
+                        clinic.markModified("socialMedia");
+                        updatedFields.push("socialMedia");
+                    }
+                    catch (err) {
+                        throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Invalid socialMedia format");
+                    }
                 }
                 yield clinic.save();
                 __1.io.emit("clinic:update", { clinicId, updatedFields });
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Profile updated successfully."
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static updateClinicCategories(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const clinicId = (0, utils_1.getClinicId)(req);
+                const { categories } = req.body;
+                if (!Array.isArray(categories) || categories.length === 0) {
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Categories are required.");
+                }
+                const clinic = yield clinic_model_1.default.findById(clinicId);
+                if (!clinic) {
+                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
+                }
+                const validCategories = yield practitionercategory_model_1.default.find({
+                    _id: { $in: categories }
+                });
+                if (validCategories.length !== categories.length) {
+                    throw new app_error_1.default(http_status_1.default.BAD_REQUEST, "Some categories are invalid.");
+                }
+                clinic.categories = categories;
+                yield clinic.save();
+                res.status(http_status_1.default.OK).json({
+                    success: true,
+                    message: "Clinic categories updated successfully."
                 });
             }
             catch (error) {
@@ -789,7 +877,7 @@ class ClinicController {
                 pipeline.push({
                     $group: {
                         _id: { $dateToString: { format: groupFormat, date: "$createdAt" } },
-                        totalSales: { $sum: "$tests.individuals" }
+                        totalSales: { $sum: "$tests.price" }
                     }
                 }, { $sort: { _id: 1 } });
                 const salesData = yield order_model_1.default.aggregate(pipeline);
@@ -1069,14 +1157,7 @@ class ClinicController {
                 clinic.certificate.file = result.secure_url;
                 clinic.certificate.status = "pending";
                 yield clinic.save();
-                const admin = yield admin_model_1.default.findOne();
-                yield admin_notification_model_1.default.create({
-                    admin: admin === null || admin === void 0 ? void 0 : admin._id,
-                    title: "Clinic Certificate",
-                    message: `Clinic ${clinic.clinicName} has uploaded a new certificate for verification.`,
-                    type: "info",
-                    isRead: false
-                });
+                yield (0, utils_2.notifyAdmin)("Clinic Certificate", `Clinic ${clinic.clinicName} has uploaded a new certificate for verification.`, "info");
                 yield clinic_notification_model_1.default.create({
                     clinic: clinic._id,
                     title: "Certificate Uploaded",
@@ -1110,16 +1191,7 @@ class ClinicController {
                 }
                 clinic.contractAccepted = true;
                 yield clinic.save();
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create({
-                        admin: admin._id,
-                        title: "Contract Accepted",
-                        message: `Clinic ${clinic.clinicName} has accepted the contract.`,
-                        type: "info",
-                        isRead: false
-                    });
-                }
+                yield (0, utils_2.notifyAdmin)("Contract Accepted", `Clinic ${clinic.clinicName} has accepted the contract.`, "info");
                 smtp_clinic_service_1.default.sendContractAcceptanceEmail(clinic)
                     .then(() => {
                     console.log("Contract acceptance email sent successfully to clinic:", clinic.clinicName);
@@ -1216,18 +1288,7 @@ class ClinicController {
                         isRead: false
                     }
                 ]);
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create([
-                        {
-                            admin: admin._id,
-                            title: "Clinic Withdrawal Requested",
-                            message: `Clinic "${clinic.clinicName}" requested ${amount.toLocaleString()} RWF to ${sanitizedPhone}.`,
-                            type: "alert",
-                            isRead: false
-                        }
-                    ]);
-                }
+                yield (0, utils_2.notifyAdmin)("Clinic Withdrawal Requested", `Clinic "${clinic.clinicName}" requested ${amount.toLocaleString()} RWF to ${sanitizedPhone}.`, "alert");
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Withdrawal initiated.",
@@ -1466,18 +1527,7 @@ class ClinicController {
                         isRead: false
                     }
                 ]);
-                const admin = yield admin_model_1.default.findOne();
-                if (admin) {
-                    yield admin_notification_model_1.default.create([
-                        {
-                            admin: admin._id,
-                            title: "Clinic Withdrawal Alert",
-                            message: `Clinic ${clinicId} initiated a ${amount.toLocaleString()} RWF withdrawal to ${accountNumber}.`,
-                            type: "wallet",
-                            isRead: false
-                        }
-                    ]);
-                }
+                yield (0, utils_2.notifyAdmin)("Clinic Withdrawal Alert", `Clinic ${clinicId} initiated a ${amount.toLocaleString()} RWF withdrawal to ${accountNumber}.`, "wallet");
                 res.status(http_status_1.default.OK).json({
                     success: true,
                     message: "Withdrawal request submitted. Awaiting confirmation.",
@@ -1606,6 +1656,109 @@ class ClinicController {
                             subtext: "this week"
                         }
                     }
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static getPublicClinicDetails(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { username } = req.params;
+                const clinic = yield clinic_model_1.default.findOne({
+                    username: username.toLowerCase(),
+                    status: "approved"
+                })
+                    .select("clinicName clinicId location bio avatar reviews supportInsurance isVerified onlineStatus country contractAccepted languages username deliveryMethods socialMedia")
+                    .populate({
+                    path: "reviews",
+                    select: "reviewNo rating comment patient createdAt",
+                    options: { sort: { createdAt: -1 }, limit: 10 },
+                    populate: {
+                        path: "patient",
+                        select: "fullName"
+                    }
+                });
+                if (!clinic) {
+                    throw new app_error_1.default(http_status_1.default.NOT_FOUND, "Clinic not found.");
+                }
+                const [tests, allTestItem] = yield Promise.all([
+                    test_model_1.default
+                        .find({ clinic: clinic._id })
+                        .select("testNo testName price turnaroundTime preTestRequirements homeCollection currencySymbol insuranceCoverage coveredByLifeLine description socialMedia")
+                        .lean(),
+                    test_item_model_1.default.find().select("name image")
+                ]);
+                const testsWithImages = tests
+                    .map((test) => {
+                    var _a;
+                    const testImage = ((_a = allTestItem.find((cat) => cat.name.toLowerCase() === test.testName.toLowerCase())) === null || _a === void 0 ? void 0 : _a.image) || "";
+                    return {
+                        testNo: test.testNo,
+                        clinicId: test.clinic,
+                        testName: test.testName,
+                        price: test.price,
+                        currencySymbol: test.currencySymbol,
+                        turnaroundTime: test.turnaroundTime,
+                        preTestRequirements: test.preTestRequirements,
+                        homeCollection: test.homeCollection,
+                        insuranceCoverage: test.insuranceCoverage,
+                        description: test.description,
+                        sampleType: test.sampleType,
+                        testImage: testImage,
+                        clinicImage: clinic.avatar || null,
+                        clinicName: clinic.clinicName
+                    };
+                })
+                    .sort((a, b) => { var _a; return (_a = a === null || a === void 0 ? void 0 : a.testName) === null || _a === void 0 ? void 0 : _a.localeCompare(b.testName); });
+                const populatedReviews = clinic.reviews;
+                const formattedReviews = populatedReviews.map((review) => ({
+                    reviewNo: review.reviewNo,
+                    rating: review.rating,
+                    comment: review.comment,
+                    patientName: typeof review.patient === "object" && "fullName" in review.patient
+                        ? review.patient.fullName
+                        : undefined
+                }));
+                const clinicDetails = {
+                    clinicId: clinic.clinicId,
+                    clinicName: clinic.clinicName,
+                    username: clinic.username,
+                    bio: clinic.bio,
+                    avatar: clinic.avatar,
+                    location: clinic.location,
+                    languages: clinic.languages,
+                    socialMedia: clinic.socialMedia,
+                    deliveryMethods: clinic.deliveryMethods,
+                    onlineStatus: clinic.onlineStatus,
+                    country: clinic.country,
+                    supportInsurance: clinic.supportInsurance,
+                    isVerified: clinic.isVerified,
+                    reviews: formattedReviews,
+                    tests: testsWithImages
+                };
+                res.status(http_status_1.default.OK).json({
+                    success: true,
+                    message: "Clinic details retrieved successfully.",
+                    data: clinicDetails
+                });
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    static getAllCategoriesForClinic(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const categories = yield practitionercategory_model_1.default
+                    .find()
+                    .sort({ createdAt: -1 });
+                res.status(http_status_1.default.OK).json({
+                    success: true,
+                    data: categories
                 });
             }
             catch (error) {
